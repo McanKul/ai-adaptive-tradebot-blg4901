@@ -3,7 +3,7 @@ import sys
 import pandas as pd
 from binance.client import Client
 from Streamer.mock_streamer import Streamer
-
+from Strategy.RSIThreshold import Strategy
 def main():
    try:
       client = Client()
@@ -11,7 +11,7 @@ def main():
       sys.exit(f"⚠ Binance istemcisi oluşturulamadı: {e}")
    sym = "DOGEUSDT"
    tf = "1m"
-   limit = 5
+   limit = 50
    data = Streamer().fetch_kline(client, sym, tf, limit)[2]
 
    
@@ -23,7 +23,6 @@ def main():
 
    df = pd.DataFrame(data, columns=columns)
 
-   # Float dönüşümleri
    float_cols = ["open", "high", "low", "close", "volume", "quote_volume",
                "taker_buy_base_volume", "taker_buy_quote_volume"]
    df[float_cols] = df[float_cols].astype(float)
@@ -39,6 +38,9 @@ def main():
    print("L:", l)
    print("C:", c)
    print("V:", v)
-
+   
+   strategy = Strategy(df)
+   signal = strategy.generate_signal()
+   print("Signal:", signal)
 
 main()

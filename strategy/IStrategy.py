@@ -8,9 +8,9 @@ class IStrategy(ABC):
    @abstractmethod
    def generate_signal(self, symbol: str) -> Optional[str]: pass
    #multi signal generations
-   @staticmethod
-   @abstractmethod
-   def generate_signals(df: pd.DataFrame) -> pd.Series: pass
+   # @staticmethod
+   # @abstractmethod
+   # def generate_signals(df: pd.DataFrame) -> pd.Series: pass
 
    #for future devolopment
    # @abstractmethod
