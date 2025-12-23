@@ -7,6 +7,8 @@ from live.binance_client import BinanceClient
 from strategy.RSIThreshold import Strategy # Example strategy import
 
 # Example Configuration
+# TODO: for future - load from external file
+
 CONFIG = {
     "coins": ["DOGEUSDT"],
     "timeframe": "1m",
@@ -21,6 +23,7 @@ CONFIG = {
         # "expire_sec": 3600 # Removed from logic
     }
 }
+
 
 async def main():
     # Load API keys from env or secure source
