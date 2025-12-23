@@ -3,6 +3,7 @@ import os
 from binance.client import AsyncClient
 from live.live_engine import LiveEngine
 from live.broker_binance import BinanceBroker
+from live.binance_client import BinanceClient
 from strategy.RSIThreshold import Strategy # Example strategy import
 
 # Example Configuration
@@ -17,7 +18,7 @@ CONFIG = {
         "leverage": 5,
         "sl_pct": 2.0,
         "tp_pct": 4.0,
-        "expire_sec": 3600
+        # "expire_sec": 3600 # Removed from logic
     }
 }
 
@@ -29,7 +30,8 @@ async def main():
     if not api_key:
         print("WARNING: BINANCE_API_KEY not found in env. Client might fail or be read-only.")
 
-    client = await AsyncClient.create(api_key, api_secret)
+    raw_client = await AsyncClient.create(api_key, api_secret)
+    client = BinanceClient(raw_client)
     broker = BinanceBroker(client)
     
     engine = LiveEngine(CONFIG, broker, Strategy)
@@ -41,7 +43,7 @@ async def main():
     except Exception as e:
         print(f"Error: {e}")
     finally:
-        await client.close_connection()
+        await client.close_connection() # Calls wrapper close which calls raw close
 
 if __name__ == "__main__":
     asyncio.run(main())

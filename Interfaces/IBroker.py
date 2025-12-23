@@ -1,25 +1,13 @@
 from abc import ABC, abstractmethod
-import asyncio
-from typing import Optional, Dict
-import pandas as pd
-
-class IStrategy(ABC):
-    @abstractmethod
-    def update_bar(self, symbol: str, bar: dict) -> None: pass
-
-    @abstractmethod
-    def generate_signal(self, symbol: str) -> Optional[str]: pass
-
-    # Optional extended interface 
-    # @staticmethod
-    # @abstractmethod
-    # def generate_signals(df: pd.DataFrame) -> pd.Series: pass
-    # @abstractmethod
-    # def sl_pct(self) -> float: pass
-
+from Interfaces.IClient import IClient
 
 class IBroker(ABC):
     """Exchange-agnostic broker interface."""
+    
+    @property
+    @abstractmethod
+    def client(self) -> IClient: ...
+
     @abstractmethod
     async def get_mark_price(self, symbol: str) -> float: ...
     # ---- order & position ----
@@ -45,13 +33,3 @@ class IBroker(ABC):
 
     @abstractmethod
     async def place_take_profit(self, symbol: str, side: str, stop_price: float): ...
-
-class IStreamer(ABC):
-    @abstractmethod
-    async def start(self): ...
-
-    @abstractmethod
-    async def stop(self): ...
-
-    @abstractmethod
-    def get_queue(self) -> "asyncio.Queue": ...

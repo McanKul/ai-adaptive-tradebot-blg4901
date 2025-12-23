@@ -2,7 +2,7 @@ import asyncio, time
 from collections import defaultdict
 from utils.bar_store import BarStore
 from utils.logger import setup_logger
-from utils.interfaces import IStreamer
+from Interfaces.IStreamer import IStreamer
 from binance import BinanceSocketManager
 
 log = setup_logger("Streamer")
@@ -14,7 +14,12 @@ TF_SEC = {"1m":60, "5m":300, "15m":900, "30m":1800,
 class Streamer(IStreamer):
 
     def __init__(self, client, symbols, intervals, bar_store: BarStore):
-        self.client   = client
+        # Unwrap IClient wrapper if present to get raw AsyncClient for BSM
+        if hasattr(client, "raw_client"):
+            self.client = client.raw_client
+        else:
+            self.client   = client
+            
         self.symbols  = [s.upper().replace("/","") for s in symbols]
         self.intervals= intervals
         self.bar_store= bar_store

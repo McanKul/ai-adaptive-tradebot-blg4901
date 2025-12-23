@@ -21,7 +21,7 @@ sys.modules["binance.enums"].FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET = "TAKE_PROFIT
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from live.live_engine import LiveEngine
-from utils.interfaces import IBroker
+from Interfaces.IBroker import IBroker
 from strategy.binary_base_strategy import BinaryBaseStrategy
 
 # Mock Strategy
@@ -40,10 +40,12 @@ class TestLiveEngine(unittest.IsolatedAsyncioTestCase):
             "symbols": [{"symbol": "BTCUSDT", "quoteAsset": "USDT", "status": "TRADING"}]
         }
         # Mock klines for preload
-        # [open_time, open, high, low, close, vol, close_time, ...]
-        mock_client.futures_klines.return_value = [
+        klines_data = [
             [1600000000000, "100", "110", "90", "105", "1000", 1600000059999, "0", 0, "0", "0", "0"]
         ]
+        # Ensure futures_klines is an AsyncMock and set return_value
+        mock_client.futures_klines = AsyncMock(return_value=klines_data)
+
         
         # Mock Socket Manager
         mock_bsm = MagicMock()

@@ -2,7 +2,7 @@ from abc import abstractmethod
 from typing import Optional
 import numpy as np
 import pandas as pd
-from strategy.IStrategy import IStrategy
+from Interfaces.IStrategy import IStrategy
 # import time
 
 class BinaryBaseStrategy(IStrategy):
