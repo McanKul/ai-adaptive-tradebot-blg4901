@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 import pandas as pd
-from typing import Optional
+from typing import Optional, Dict
 
 #abstract class for strategies
 class IStrategy(ABC):
@@ -18,3 +18,4 @@ class IStrategy(ABC):
    
    # @abstractmethod
    # def tp_pct(self) -> float: pass
+
