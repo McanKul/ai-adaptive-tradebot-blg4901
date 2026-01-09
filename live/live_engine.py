@@ -6,7 +6,7 @@ from live.position_manager import PositionManager
 from live.broker_binance import BinanceBroker
 from live.streamer import Streamer
 from utils.logger import setup_logger
-from strategy.binary_base_strategy import BinaryBaseStrategy # Import local strategy base
+from Strategy.binary_base_strategy import BinaryBaseStrategy # Import local strategy base
 
 # Mock Strategy Loader for now - in real implementation this might be dynamic
 # Assumes strategy classes are available or passed in
