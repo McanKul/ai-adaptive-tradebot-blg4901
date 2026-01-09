@@ -3,3 +3,5 @@ pandas
 numpy
 talib
 asyncio
+pytest
+pytest-asyncio
