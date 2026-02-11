@@ -1,0 +1,50 @@
+========================================================================
+  NEWS ENGINE — MOCK TEST RESULTS
+========================================================================
+  Run Date       : 2026-02-11 13:46:58
+  News Source     : MockNewsSource
+  Analyzer        : GeminiSentimentAnalyzer (gemini-2.5-flash)
+  Symbols Tested  : BTCUSDT, ETHUSDT
+========================================================================
+
+────────────────────────────────────────────────────────────────────────
+  SYMBOL: BTCUSDT
+────────────────────────────────────────────────────────────────────────
+  Articles fetched: 2
+
+  [1] Title       : Bitcoin Surges Past Key Resistance Level
+      Content     : Bitcoin has broken through the $50,000 resistance level with strong volume, indicating bullish momentum.
+      Source      : MockNews
+      Published   : 2026-02-11T13:46:57.811876
+      Symbol      : BTC
+
+  [2] Title       : Institutional Investors Increase Bitcoin Holdings
+      Content     : Major financial institutions have announced increased Bitcoin allocations in their portfolios.
+      Source      : MockNews
+      Published   : 2026-02-11T13:46:57.811876
+      Symbol      : BTC
+
+  ► Sentiment Score : 0.9500
+  ► Sentiment Label : Very Bullish
+  ► Analyzed By     : GeminiSentimentAnalyzer (gemini-2.5-flash)
+  ► Analysis Date   : 2026-02-11 13:46:58
+
+────────────────────────────────────────────────────────────────────────
+  SYMBOL: ETHUSDT
+────────────────────────────────────────────────────────────────────────
+  Articles fetched: 1
+
+  [1] Title       : Ethereum Network Upgrade Successful
+      Content     : The latest Ethereum network upgrade has been completed successfully, improving scalability.
+      Source      : MockNews
+      Published   : 2026-02-11T13:46:57.811876
+      Symbol      : ETH
+
+  ► Sentiment Score : 0.9000
+  ► Sentiment Label : Very Bullish
+  ► Analyzed By     : GeminiSentimentAnalyzer (gemini-2.5-flash)
+  ► Analysis Date   : 2026-02-11 13:46:58
+
+========================================================================
+  END OF REPORT
+========================================================================
