@@ -2,6 +2,32 @@ import logging
 from pathlib import Path
 # from utils.config_loaders import ConfigLoader # Removed as it's not present/needed yet. simpler implementation
 
+
+def log(level: str, message: str) -> None:
+    """
+    Simple logging function.
+    
+    Args:
+        level: Log level as string ("INFO", "WARNING", "ERROR", "DEBUG")
+        message: Message to log
+    """
+    logger = logging.getLogger("bitirme")
+    if not logger.hasHandlers():
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+    
+    level_map = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL,
+    }
+    logger.log(level_map.get(level.upper(), logging.INFO), message)
+
+
 def setup_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     logger = logging.getLogger(name)
     if logger.hasHandlers():
