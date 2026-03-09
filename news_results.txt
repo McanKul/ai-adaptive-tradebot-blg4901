@@ -1,0 +1,67 @@
+========================================================================
+  NEWS ENGINE — LIVE NEWS TEST
+========================================================================
+  Run Date       : 2026-03-09 20:59:43
+  News Source    : DDGNewsSource
+  Analyzer       : GeminiSentimentAnalyzer (gemini-2.5-flash)
+========================================================================
+
+────────────────────────────────────────────────────────────────────────
+  SYMBOL: BTCUSDT
+────────────────────────────────────────────────────────────────────────
+  Articles fetched: 5
+
+  [1] Title : Bitcoin climbs in break with stocks amid inflation concerns
+      Source: San Jose Mercury News
+      Date  : 2026-03-09T16:59:44+00:00
+
+  [2] Title : As cryptocurrency rises in St. Cloud, Perryman eyes protections
+      Source: SC Cloud | St. Cloud Times
+      Date  : 2026-03-09T07:59:44+00:00
+
+  [3] Title : Why the Bitcoin price looks more like a random walk of a cocaine addict — and wh...
+      Source: DLNews
+      Date  : 2026-03-09T13:59:44+00:00
+
+  [4] Title : Bitcoin price today: muted near $67k as oil surge stokes inflation fears By...
+      Source: Investing.com
+      Date  : 2026-03-09T03:59:44+00:00
+
+  [5] Title : U.S. Oil Hits $120 as Crypto Investors Flood Into Bitcoin Hyper Presale
+      Source: Cryptonews
+      Date  : 2026-03-09T15:59:44+00:00
+
+  ► Sentiment Score : 0.4200
+  ► Sentiment Label : Neutral
+
+────────────────────────────────────────────────────────────────────────
+  SYMBOL: ETHUSDT
+────────────────────────────────────────────────────────────────────────
+  Articles fetched: 5
+
+  [1] Title : Ethereum Rises to $2,000 as Tom Lee's BitMine Tops Up $9 Billion ETH Treasury
+      Source: Yahoo Finance
+      Date  : 2026-03-09T16:32:00+00:00
+
+  [2] Title : Crypto Today: Bitcoin, Ethereum, XRP tick up as Oil prices surge amid US-Iran war
+      Source: FXStreet
+      Date  : 2026-03-09T12:00:00+00:00
+
+  [3] Title : Iran war fallout hits crypto equities - BMNR stock defies sell-off after Ethereum hits $2,000
+      Source: Asianet Newsable
+      Date  : 2026-03-09T11:30:08+00:00
+
+  [4] Title : Solana reaches historic milestone against Ethereum in RWA market
+      Source: Crypto
+      Date  : 2026-03-09T15:07:00+00:00
+
+  [5] Title : 1 Top Cryptocurrency to Buy Now With $1,000, and 2 to Avoid
+      Source: AOL
+      Date  : 2026-03-09T16:50:00+00:00
+
+  ► Sentiment Score : 0.7500
+  ► Sentiment Label : Bullish
+
+========================================================================
+  END OF REPORT
+========================================================================
