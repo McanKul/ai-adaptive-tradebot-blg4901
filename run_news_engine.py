@@ -21,7 +21,10 @@ def sentiment_label(score: float) -> str:
     elif score <= 0.8: return "Bullish"
     else: return "Very Bullish"
 
-async def run():
+async def run(symbols: list = None) -> dict:
+    if symbols is None:
+        symbols = ["BTCUSDT", "ETHUSDT"]
+
     google_api_key = os.getenv("GOOGLE_API_KEY")
     if not google_api_key:
         print("ERROR: GOOGLE_API_KEY not found in .env")
@@ -41,8 +44,8 @@ async def run():
         news_limit=10
     )
 
-    symbols = ["BTCUSDT", "ETHUSDT"]
     run_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    results = {}
 
     # ── Collect results ────────────────────────────────────────────────────
     lines = []
@@ -82,6 +85,7 @@ async def run():
         # Run sentiment
         print(f"Analyzing sentiment for {symbol}...")
         score = await engine.get_sentiment(symbol, force_refresh=True)
+        results[symbol] = score
 
         lines.append(f"  ► Sentiment Score : {score:.4f}")
         lines.append(f"  ► Sentiment Label : {sentiment_label(score)}")
@@ -101,5 +105,11 @@ async def run():
     print(report)
     print(f"\n✔ Results written to {output_path}")
 
+    return results
+
 if __name__ == "__main__":
-    asyncio.run(run())
+    if len(sys.argv) > 1:
+        symbols_arg = sys.argv[1:]
+        asyncio.run(run(symbols_arg))
+    else:
+        asyncio.run(run())

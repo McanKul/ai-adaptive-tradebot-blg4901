@@ -1,65 +1,57 @@
 ========================================================================
   NEWS ENGINE — LIVE NEWS TEST
 ========================================================================
-  Run Date       : 2026-03-09 20:59:43
+  Run Date       : 2026-03-09 22:25:12
   News Source    : DDGNewsSource
   Analyzer       : GeminiSentimentAnalyzer (gemini-2.5-flash)
 ========================================================================
 
 ────────────────────────────────────────────────────────────────────────
-  SYMBOL: BTCUSDT
+  SYMBOL: SOLUSDT
 ────────────────────────────────────────────────────────────────────────
-  Articles fetched: 5
+  Articles fetched: 3
 
-  [1] Title : Bitcoin climbs in break with stocks amid inflation concerns
-      Source: San Jose Mercury News
-      Date  : 2026-03-09T16:59:44+00:00
+  [1] Title : Crypto and the Iran war: How geopolitics became the market’s biggest variable | FXStreet
+      Source: The Forex Market
+      Date  : 2026-03-08T23:25:12+00:00
 
-  [2] Title : As cryptocurrency rises in St. Cloud, Perryman eyes protections
-      Source: SC Cloud | St. Cloud Times
-      Date  : 2026-03-09T07:59:44+00:00
+  [2] Title : Solana reaches historic milestone against Ethereum in RWA market
+      Source: Crypto on The Street on MSN
+      Date  : 2026-02-08T19:25:12+00:00
 
-  [3] Title : Why the Bitcoin price looks more like a random walk of a cocaine addict — and wh...
-      Source: DLNews
-      Date  : 2026-03-09T13:59:44+00:00
-
-  [4] Title : Bitcoin price today: muted near $67k as oil surge stokes inflation fears By...
-      Source: Investing.com
-      Date  : 2026-03-09T03:59:44+00:00
-
-  [5] Title : U.S. Oil Hits $120 as Crypto Investors Flood Into Bitcoin Hyper Presale
-      Source: Cryptonews
-      Date  : 2026-03-09T15:59:44+00:00
-
-  ► Sentiment Score : 0.4200
-  ► Sentiment Label : Neutral
-
-────────────────────────────────────────────────────────────────────────
-  SYMBOL: ETHUSDT
-────────────────────────────────────────────────────────────────────────
-  Articles fetched: 5
-
-  [1] Title : Ethereum Rises to $2,000 as Tom Lee's BitMine Tops Up $9 Billion ETH Treasury
-      Source: Yahoo Finance
-      Date  : 2026-03-09T16:32:00+00:00
-
-  [2] Title : Crypto Today: Bitcoin, Ethereum, XRP tick up as Oil prices surge amid US-Iran war
-      Source: FXStreet
-      Date  : 2026-03-09T12:00:00+00:00
-
-  [3] Title : Iran war fallout hits crypto equities - BMNR stock defies sell-off after Ethereum hits $2,000
-      Source: Asianet Newsable
-      Date  : 2026-03-09T11:30:08+00:00
-
-  [4] Title : Solana reaches historic milestone against Ethereum in RWA market
-      Source: Crypto
-      Date  : 2026-03-09T15:07:00+00:00
-
-  [5] Title : 1 Top Cryptocurrency to Buy Now With $1,000, and 2 to Avoid
-      Source: AOL
-      Date  : 2026-03-09T16:50:00+00:00
+  [3] Title : New Crypto: Ethereum Based Crypto Pepeto Announces Presale Stage Sold Out in 48 Hours and XRP Price Prediction
+      Source: The Manila Times
+      Date  : 2026-01-19T19:25:12+00:00
 
   ► Sentiment Score : 0.7500
+  ► Sentiment Label : Bullish
+
+────────────────────────────────────────────────────────────────────────
+  SYMBOL: DOGEUSDT
+────────────────────────────────────────────────────────────────────────
+  Articles fetched: 5
+
+  [1] Title : Dogecoin Faces Possible 37% Price Move as Triangle Forms
+      Source: Analytics Insight
+      Date  : 2026-03-09T16:49:00+00:00
+
+  [2] Title : Dogecoin Setting Up For A 37% Move, Says Popular Analyst — Here's What Technicals Signal For DOGE
+      Source: Benzinga
+      Date  : 2026-03-09T04:25:00+00:00
+
+  [3] Title : Ethereum Based Crypto Pepeto Announces Whale Wallet Accumulation Increase While Elon Musk Dogecoin Mission Loads
+      Source: The Manila Times
+      Date  : 2026-03-08T23:16:00+00:00
+
+  [4] Title : Dogecoin Forms Multi-Year Bullish Pennant as Analysts Watch for Potential Breakout
+      Source: Live Bitcoin News
+      Date  : 2026-03-09T05:40:00+00:00
+
+  [5] Title : Crypto News: Pepeto Announces AI Market Protection by Binance Expert as Bitcoin Price Prediction Target $250K
+      Source: Markets Insider
+      Date  : 2026-03-09T18:01:00+00:00
+
+  ► Sentiment Score : 0.7000
   ► Sentiment Label : Bullish
 
 ========================================================================
