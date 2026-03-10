@@ -1,0 +1,121 @@
+# =====================================================================
+# example_realism_config.yaml
+# =====================================================================
+# Drop-in config file for RealismConfig.from_yaml("example_realism_config.yaml")
+#
+# Every key defaults OFF / to the legacy value, so uncommenting sections
+# progressively adds realism.  Load via:
+#
+#     from Backtest.realism_config import RealismConfig
+#     rc = RealismConfig.from_yaml("example_realism_config.yaml")
+#     config = BacktestConfig(data=data, realism=rc)
+# =====================================================================
+
+# ---------- transaction costs ----------
+transaction_costs:
+  # Fee model
+  fee_model: "fixed"          # "fixed" | "tiered"
+  maker_fee_bps: 2.0
+  taker_fee_bps: 4.0
+
+  # Slippage model  (A4)
+  #   "fixed"          → constant basis-point slippage
+  #   "volume_sqrt"    → market-impact ∝ √(qty / bar_volume) × impact_factor
+  #   "volatility_atr" → slippage ∝ ATR × impact_factor
+  slippage_model: "volume_sqrt"
+  slippage_bps: 1.0           # Used only when slippage_model = "fixed"
+  impact_factor: 0.1
+  max_slippage_bps: 50.0
+  atr_period_for_slippage: 14
+  vola_lookback: 20
+  volume_is_quote: false
+  liquidity_scale: 1.0
+
+  # Slippage residual noise  (wraps the chosen slippage model)
+  #   "none"                   → no noise (default)
+  #   "multiplicative_lognormal" → mult = exp(σZ - σ²/2), E[mult]=1
+  #   "additive_halfnormal"     → adds |N(0,σ)| * price/10000
+  #   "mixture"                → with prob p fat-tail σ₂, else σ₁
+  # slippage_noise: "none"
+  # slippage_noise_sigma: 0.3
+  # slippage_noise_mixture_p: 0.1     # probability of fat-tail component
+  # slippage_noise_mixture_sigma2: 0.6
+
+  # Spread model
+  spread_model: "fixed"       # "fixed" | "ohlc_estimator"
+  spread_bps: 2.0
+
+  # Latency model
+  latency_model: "jitter"     # "fixed" | "jitter" | "distribution"
+  latency_ns: 5000000         # 5 ms base
+  latency_jitter_ns: 2000000  # ±2 ms jitter
+  latency_distribution: "uniform"  # "none"|"uniform"|"exponential"|"gamma"|"lognormal"|"weibull"|"mixture"
+
+  # Gamma distribution params  (latency_distribution: "gamma")
+  # latency_gamma_shape: 2.0
+  # latency_gamma_scale_ns: 10000000    # 10 ms
+
+  # Lognormal distribution params  (latency_distribution: "lognormal")
+  # latency_lognormal_mu: 16.0          # ln(ns) ≈ ~8.9 ms median
+  # latency_lognormal_sigma: 0.5
+
+  # Weibull distribution params  (latency_distribution: "weibull")
+  # latency_weibull_shape: 1.5
+  # latency_weibull_scale_ns: 20000000  # 20 ms
+
+  # Mixture distribution params  (latency_distribution: "mixture")
+  # latency_mixture_p_spike: 0.05       # 5% probability of spike component
+  # latency_mixture_base_dist: "gamma"
+  # latency_mixture_spike_dist: "lognormal"
+
+  # Poisson spike overlay (independent of base distribution)
+  # spike_event_mode: "none"      # "none" | "poisson"
+  # spike_lambda: 0.02            # expected spikes per order
+  # spike_magnitude_dist: "lognormal"  # "lognormal" | "exponential"
+  # spike_magnitude_ns: 100000000     # 100 ms characteristic magnitude
+
+  # Price-aware latency  (A2)
+  #   "timestamp_only"  → legacy: fill at bar close
+  #   "price_aware"     → look up bar at fill-time → fill at that bar's OHLC
+  price_latency_mode: "price_aware"
+  price_latency_bar_field: "open"
+
+  # Marketable-limit detection (A5)
+  #   true → limit orders whose price crosses the estimated spread mid-point
+  #   are charged taker fees (they are effectively market orders)
+  marketable_limit_is_taker: true
+
+  # Determinism
+  seed: 42
+
+  # Per-symbol overrides
+  per_symbol_overrides:
+    DOGEUSDT:
+      slippage_bps: 3.0
+      spread_bps: 5.0
+    BTCUSDT:
+      impact_factor: 0.05
+
+# ---------- funding  (perpetual futures)  (A6) ----------
+funding:
+  enabled: true
+  funding_interval_hours: 8
+  funding_rate_mode: "constant"   # "constant" | "series"
+  funding_rate: 0.0001            # 0.01 % per interval
+
+# ---------- borrow / margin interest  (A6) ----------
+borrow:
+  enabled: true
+  annual_borrow_rate: 0.10        # 10 % annualised
+  charge_interval: "bar"          # "bar" | "daily" | "hourly"
+
+# ---------- cross-validation  (Part C) ----------
+cv_enabled: true
+cv_method: "purged_kfold"         # "purged_kfold" | "walk_forward" | "combinatorial_purged"
+cv_n_splits: 5
+cv_embargo_pct: 0.01
+cv_purge_pct: 0.0
+# Walk-forward specific (used only when cv_method = "walk_forward"):
+# cv_train_duration_ns: 2592000000000000   # 30 days in ns
+# cv_test_duration_ns:  864000000000000    # 10 days in ns
+# cv_expanding: false
