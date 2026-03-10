@@ -39,3 +39,20 @@ class BarStore:
     def get_ohlcv(self, symbol: str, tf: str) -> Dict[str, List[float]]:
         """Returns reference, not copy – strategy can use directly."""
         return self._data[(symbol, tf)]
+
+    def get_recent(self, symbol: str, tf: str, limit: int) -> List[Dict[str, float]]:
+        """
+        Returns the most recent `limit` bars as a list of dictionaries.
+        Each dictionary contains keys: 'open', 'high', 'low', 'close', 'volume'.
+        """
+        buf = self._data[(symbol, tf)]
+        return [
+            {
+                "open": buf["open"][i],
+                "high": buf["high"][i],
+                "low": buf["low"][i],
+                "close": buf["close"][i],
+                "volume": buf["volume"][i],
+            }
+            for i in range(max(0, len(buf["open"]) - limit), len(buf["open"]))
+        ]
