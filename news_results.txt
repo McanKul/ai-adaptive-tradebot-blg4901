@@ -1,7 +1,7 @@
 ========================================================================
   NEWS ENGINE — LIVE NEWS TEST
 ========================================================================
-  Run Date       : 2026-03-09 22:25:12
+  Run Date       : 2026-03-09 22:37:14
   News Source    : DDGNewsSource
   Analyzer       : GeminiSentimentAnalyzer (gemini-2.5-flash)
 ========================================================================
@@ -9,49 +9,29 @@
 ────────────────────────────────────────────────────────────────────────
   SYMBOL: SOLUSDT
 ────────────────────────────────────────────────────────────────────────
-  Articles fetched: 3
-
-  [1] Title : Crypto and the Iran war: How geopolitics became the market’s biggest variable | FXStreet
-      Source: The Forex Market
-      Date  : 2026-03-08T23:25:12+00:00
-
-  [2] Title : Solana reaches historic milestone against Ethereum in RWA market
-      Source: Crypto on The Street on MSN
-      Date  : 2026-02-08T19:25:12+00:00
-
-  [3] Title : New Crypto: Ethereum Based Crypto Pepeto Announces Presale Stage Sold Out in 48 Hours and XRP Price Prediction
-      Source: The Manila Times
-      Date  : 2026-01-19T19:25:12+00:00
-
-  ► Sentiment Score : 0.7500
-  ► Sentiment Label : Bullish
-
-────────────────────────────────────────────────────────────────────────
-  SYMBOL: DOGEUSDT
-────────────────────────────────────────────────────────────────────────
   Articles fetched: 5
 
-  [1] Title : Dogecoin Faces Possible 37% Price Move as Triangle Forms
+  [1] Title : Solana reaches historic milestone against Ethereum in RWA market
+      Source: Crypto on The Street on MSN
+      Date  : 2026-01-27T19:37:14+00:00
+
+  [2] Title : Solana reaches historic milestone against Ethereum in RWA market
+      Source: Crypto
+      Date  : 2026-03-09T18:55:00+00:00
+
+  [3] Title : The New Volume King: BlockDAG Surpasses Early Solana & Kaspa Records as 1000x Potential Ignites
       Source: Analytics Insight
-      Date  : 2026-03-09T16:49:00+00:00
+      Date  : 2026-03-09T17:44:00+00:00
 
-  [2] Title : Dogecoin Setting Up For A 37% Move, Says Popular Analyst — Here's What Technicals Signal For DOGE
-      Source: Benzinga
-      Date  : 2026-03-09T04:25:00+00:00
+  [4] Title : Crypto News Today: Solana Processes $650B Stablecoin Volume, Bitcoin Slides on Oil Shock
+      Source: Analytics Insight
+      Date  : 2026-03-09T14:32:00+00:00
 
-  [3] Title : Ethereum Based Crypto Pepeto Announces Whale Wallet Accumulation Increase While Elon Musk Dogecoin Mission Loads
-      Source: The Manila Times
-      Date  : 2026-03-08T23:16:00+00:00
+  [5] Title : Solana ETFs Build 'Serious Investor Base,' Outpacing Bitcoin in Key Metrics
+      Source: Crypto News
+      Date  : 2026-03-09T13:44:00+00:00
 
-  [4] Title : Dogecoin Forms Multi-Year Bullish Pennant as Analysts Watch for Potential Breakout
-      Source: Live Bitcoin News
-      Date  : 2026-03-09T05:40:00+00:00
-
-  [5] Title : Crypto News: Pepeto Announces AI Market Protection by Binance Expert as Bitcoin Price Prediction Target $250K
-      Source: Markets Insider
-      Date  : 2026-03-09T18:01:00+00:00
-
-  ► Sentiment Score : 0.7000
+  ► Sentiment Score : 0.7800
   ► Sentiment Label : Bullish
 
 ========================================================================
