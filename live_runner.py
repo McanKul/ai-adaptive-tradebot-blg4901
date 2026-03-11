@@ -18,23 +18,33 @@ from live.live_config import LiveConfig
 from live.live_engine import LiveEngine
 from live.broker_binance import BinanceBroker
 from live.binance_client import BinanceClient
-from live.rate_limiter import AsyncRateLimiter
+from strategy.RSIThreshold import Strategy  # Example strategy import
+
+# Optional: News sentiment components
+from news.ddg_news_source import DDGNewsSource
+from news.gemini_sentiment import GeminiSentimentAnalyzer
+from news.signal_combiner import BinarySignalCombiner
+
+# Example Configuration
+# TODO: for future - load from external file
+
+CONFIG = {
+    "coins": ["DOGEUSDT"],
+    "timeframe": "1m",
+    "name": "RSI_Threshold_Strategy",
+    "params": {
+        "timeframe": "1m",
+    },
+    "execution": {
+        "leverage": 5,
+        "sl_pct": 2.0,
+        "tp_pct": 4.0,
+    }
+}
 
 
-async def main(config_path: str):
-    # 1) Load config
-    cfg = LiveConfig.from_yaml(config_path)
-    print(f"Config loaded: {config_path}")
-    print(f"  strategy : {cfg.strategy_class}")
-    print(f"  symbols  : {cfg.symbols}")
-    print(f"  timeframe: {cfg.timeframe}")
-    print(f"  leverage : {cfg.sizing.leverage}x")
-    print(f"  sizing   : {cfg.sizing.mode} (margin={cfg.sizing.margin_usd} USD)")
-    print(f"  TP       : {cfg.exit.take_profit_pct}  SL: {cfg.exit.stop_loss_pct}")
-    print(f"  risk     : max_pos={cfg.risk.max_concurrent_positions}, "
-          f"max_daily_loss={cfg.risk.max_daily_loss}")
-
-    # 2) API keys
+async def main():
+    # Load API keys from env or secure source
     api_key = os.getenv("BINANCE_API_KEY", "")
     api_secret = os.getenv("BINANCE_API_SECRET", "")
 
@@ -44,12 +54,32 @@ async def main(config_path: str):
     testnet = cfg.testnet
     raw_client = await AsyncClient.create(api_key, api_secret, testnet=testnet)
     client = BinanceClient(raw_client)
-    rl = AsyncRateLimiter(max_per_minute=cfg.rate_limit.requests_per_minute)
-    broker = BinanceBroker(client, rate_limiter=rl,
-                           exchange_info_ttl=cfg.rate_limit.exchange_info_ttl_sec)
+    broker = BinanceBroker(client)
 
-    # 3) Start engine
-    engine = LiveEngine(cfg, broker)
+    # ── News Sentiment Setup (optional) ──────────────────────────────────
+    news_source = None
+    sentiment_analyzer = None
+    signal_combiner = None
+
+    google_api_key = os.getenv("GOOGLE_API_KEY")
+    if google_api_key:
+        print("✔ GOOGLE_API_KEY found — enabling news sentiment integration")
+        news_source = DDGNewsSource()
+        sentiment_analyzer = GeminiSentimentAnalyzer(api_key=google_api_key)
+        signal_combiner = BinarySignalCombiner(buy_threshold=0.6, sell_threshold=0.4)
+    else:
+        print("ℹ GOOGLE_API_KEY not set — running without news sentiment")
+
+    # ── Create Engine ────────────────────────────────────────────────────
+    engine = LiveEngine(
+        CONFIG,
+        broker,
+        Strategy,
+        news_source=news_source,
+        sentiment_analyzer=sentiment_analyzer,
+        signal_combiner=signal_combiner,
+        news_refresh_interval=300,
+    )
 
     try:
         await engine.run()
@@ -60,13 +90,7 @@ async def main(config_path: str):
         import traceback
         traceback.print_exc()
     finally:
-        # Force close open positions on shutdown
-        try:
-            await engine.pos_mgr.force_close_all()
-        except Exception:
-            pass
         await client.close_connection()
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Live trading runner")

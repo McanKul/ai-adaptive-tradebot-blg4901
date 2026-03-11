@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Adaptive TradeBot - Project Gantt Chart</title>
+    <style>
+        :root {
+            --bg-primary: #0f0f23;
+            --bg-secondary: #1a1a2e;
+            --bg-tertiary: #16213e;
+            --accent-blue: #4f8cff;
+            --accent-green: #00d26a;
+            --accent-yellow: #ffc107;
+            --accent-red: #ff5959;
+            --accent-purple: #a855f7;
+            --text-primary: #f0f0f0;
+            --text-secondary: #a0a0a0;
+            --border-color: #2d2d4a;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        h1 {
+            font-size: 2.2rem;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1rem;
+        }
+
+        .current-date {
+            display: inline-block;
+            background: var(--bg-tertiary);
+            padding: 8px 16px;
+            border-radius: 20px;
+            margin-top: 12px;
+            border: 1px solid var(--accent-blue);
+            font-size: 0.9rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .stat-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(79, 140, 255, 0.15);
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .stat-card.completed .stat-value { color: var(--accent-green); }
+        .stat-card.in-progress .stat-value { color: var(--accent-yellow); }
+        .stat-card.upcoming .stat-value { color: var(--text-secondary); }
+        .stat-card.delayed .stat-value { color: var(--accent-red); }
+
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            justify-content: center;
+            margin-bottom: 24px;
+            padding: 16px;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+        }
+
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+        }
+
+        .gantt-container {
+            background: var(--bg-secondary);
+            border-radius: 16px;
+            border: 1px solid var(--border-color);
+            padding: 24px;
+            overflow-x: auto;
+        }
+
+        .gantt-header {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 12px;
+            margin-bottom: 8px;
+        }
+
+        .gantt-header-task {
+            font-weight: 600;
+            color: var(--accent-blue);
+        }
+
+        .months-row {
+            display: flex;
+        }
+
+        .month-cell {
+            flex: 1;
+            text-align: center;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--accent-blue);
+            min-width: 120px;
+        }
+
+        .gantt-row {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border-color);
+            align-items: center;
+            transition: background 0.2s;
+        }
+
+        .gantt-row:hover {
+            background: rgba(79, 140, 255, 0.05);
+        }
+
+        .gantt-row.milestone {
+            background: rgba(79, 140, 255, 0.08);
+        }
+
+        .task-name {
+            padding-right: 16px;
+            font-size: 0.9rem;
+        }
+
+        .task-name.milestone {
+            font-weight: 600;
+            color: var(--accent-blue);
+        }
+
+        .task-name.subtask {
+            padding-left: 24px;
+            color: var(--text-secondary);
+        }
+
+        .task-dates {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+
+        .gantt-bar-container {
+            position: relative;
+            height: 28px;
+            display: flex;
+            min-width: 840px;
+        }
+
+        .gantt-bar {
+            position: absolute;
+            height: 24px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: white;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .gantt-bar:hover {
+            transform: scaleY(1.1);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        }
+
+        .gantt-bar.completed {
+            background: linear-gradient(90deg, #00a854, #00d26a);
+        }
+
+        .gantt-bar.in-progress {
+            background: linear-gradient(90deg, #d48806, #ffc107);
+        }
+
+        .gantt-bar.delayed {
+            background: linear-gradient(90deg, #cf1322, #ff5959);
+        }
+
+        .gantt-bar.upcoming {
+            background: linear-gradient(90deg, #4a4a6a, #6a6a8a);
+        }
+
+        .today-marker {
+            position: absolute;
+            width: 3px;
+            height: 100%;
+            background: var(--accent-red);
+            top: 0;
+            z-index: 10;
+        }
+
+        .today-label {
+            position: absolute;
+            top: -20px;
+            transform: translateX(-50%);
+            background: var(--accent-red);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            white-space: nowrap;
+        }
+
+        .progress-indicator {
+            margin-top: 32px;
+            padding: 24px;
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .progress-bar-bg {
+            height: 24px;
+            background: var(--bg-primary);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-green), var(--accent-blue));
+            border-radius: 12px;
+            transition: width 1s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .notes-section {
+            margin-top: 24px;
+            padding: 20px;
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            border-left: 4px solid var(--accent-yellow);
+        }
+
+        .notes-title {
+            font-weight: 600;
+            color: var(--accent-yellow);
+            margin-bottom: 12px;
+        }
+
+        .notes-list {
+            list-style: none;
+        }
+
+        .notes-list li {
+            padding: 8px 0;
+            padding-left: 20px;
+            position: relative;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .notes-list li::before {
+            content: "→";
+            position: absolute;
+            left: 0;
+            color: var(--accent-yellow);
+        }
+
+        @media (max-width: 768px) {
+            h1 { font-size: 1.6rem; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .task-name { font-size: 0.8rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤖 AI Adaptive TradeBot</h1>
+            <p class="subtitle">BLG4901 Graduation Project - Gantt Chart</p>
+            <div class="current-date">📅 Today: January 18, 2026</div>
+        </header>
+
+        <div class="stats-grid">
+            <div class="stat-card completed">
+                <div class="stat-value">5</div>
+                <div class="stat-label">Tasks Completed</div>
+            </div>
+            <div class="stat-card in-progress">
+                <div class="stat-value">2</div>
+                <div class="stat-label">In Progress</div>
+            </div>
+            <div class="stat-card delayed">
+                <div class="stat-value">1</div>
+                <div class="stat-label">Delayed</div>
+            </div>
+            <div class="stat-card upcoming">
+                <div class="stat-value">6</div>
+                <div class="stat-label">Upcoming</div>
+            </div>
+        </div>
+
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-color" style="background: linear-gradient(90deg, #00a854, #00d26a);"></div>
+                <span>Completed</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: linear-gradient(90deg, #d48806, #ffc107);"></div>
+                <span>In Progress</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: linear-gradient(90deg, #cf1322, #ff5959);"></div>
+                <span>Delayed / Needs Attention</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: linear-gradient(90deg, #4a4a6a, #6a6a8a);"></div>
+                <span>Upcoming</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: var(--accent-red); width: 3px;"></div>
+                <span>Today</span>
+            </div>
+        </div>
+
+        <div class="gantt-container">
+            <div class="gantt-header">
+                <div class="gantt-header-task">Task</div>
+                <div class="months-row">
+                    <div class="month-cell">Oct '25</div>
+                    <div class="month-cell">Nov '25</div>
+                    <div class="month-cell">Dec '25</div>
+                    <div class="month-cell">Jan '26</div>
+                    <div class="month-cell">Feb '26</div>
+                    <div class="month-cell">Mar '26</div>
+                    <div class="month-cell">Apr '26</div>
+                </div>
+            </div>
+
+            <div id="gantt-body">
+                <!-- 1. Project Planning and Research -->
+                <div class="gantt-row milestone">
+                    <div class="task-name milestone">
+                        1. Project Planning and Research
+                        <div class="task-dates">Oct 01 - Oct 22, 2025</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar completed" style="left: 0%; width: 10%;">✓ Done</div>
+                    </div>
+                </div>
+                <div class="gantt-row">
+                    <div class="task-name subtask">
+                        1.1 Define objectives and success metrics
+                        <div class="task-dates">Oct 01 - Oct 10</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar completed" style="left: 0%; width: 4.5%;">✓</div>
+                    </div>
+                </div>
+                <div class="gantt-row">
+                    <div class="task-name subtask">
+                        1.2 Review existing trading bots
+                        <div class="task-dates">Oct 11 - Oct 22</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar completed" style="left: 4.8%; width: 5.2%;">✓</div>
+                    </div>
+                </div>
+
+                <!-- 2. System Design -->
+                <div class="gantt-row milestone">
+                    <div class="task-name milestone">
+                        2. System Design
+                        <div class="task-dates">Oct 22 - Nov 18, 2025</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar completed" style="left: 10%; width: 13%;">✓ Done</div>
+                    </div>
+                </div>
+                <div class="gantt-row">
+                    <div class="task-name subtask">
+                        2.1 Data flow and module interaction design
+                        <div class="task-dates">Oct 22 - Nov 03</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar completed" style="left: 10%; width: 5.7%;">✓</div>
+                    </div>
+                </div>
+                <div class="gantt-row">
+                    <div class="task-name subtask">
+                        2.2 Risk management and observability design
+                        <div class="task-dates">Nov 04 - Nov 18</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar completed" style="left: 16.2%; width: 7.1%;">✓</div>
+                    </div>
+                </div>
+
+                <!-- 3. Core Development -->
+                <div class="gantt-row milestone">
+                    <div class="task-name milestone">
+                        3. Core Development
+                        <div class="task-dates">Nov 19, 2025 - Feb 09, 2026</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar in-progress" style="left: 23.3%; width: 39%;">🔨 In Progress</div>
+                    </div>
+                </div>
+                <div class="gantt-row">
+                    <div class="task-name subtask">
+                        3.1 Market data ingestion and preprocessing
+                        <div class="task-dates">Nov 19 - Dec 06</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar completed" style="left: 23.3%; width: 8.6%;">✓ Streamer + BarStore</div>
+                    </div>
+                </div>
+                <div class="gantt-row">
+                    <div class="task-name subtask">
+                        3.2 Tick-level backtesting engine
+                        <div class="task-dates">Dec 07, 2025 - Jan 03, 2026</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar delayed" style="left: 32%; width: 13%;">⚠️ Not Started</div>
+                    </div>
+                </div>
+                <div class="gantt-row">
+                    <div class="task-name subtask">
+                        3.3 Regime detection & sentiment analysis
+                        <div class="task-dates">Jan 04 - Jan 31, 2026</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar in-progress" style="left: 45.2%; width: 13%;">🔨 Current Focus</div>
+                    </div>
+                </div>
+                <div class="gantt-row">
+                    <div class="task-name subtask">
+                        3.4 Risk management and trade execution
+                        <div class="task-dates">Feb 01 - Feb 09, 2026</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar completed" style="left: 58.1%; width: 4.3%;">✓ PositionManager</div>
+                    </div>
+                </div>
+
+                <!-- 4. Integration and Testing -->
+                <div class="gantt-row milestone">
+                    <div class="task-name milestone">
+                        4. Integration and Testing
+                        <div class="task-dates">Feb 10 - Mar 09, 2026</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar upcoming" style="left: 62.4%; width: 13.3%;">Upcoming</div>
+                    </div>
+                </div>
+                <div class="gantt-row">
+                    <div class="task-name subtask">
+                        4.1 Integration of all modules
+                        <div class="task-dates">Feb 10 - Feb 20</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar upcoming" style="left: 62.4%; width: 4.8%;"></div>
+                    </div>
+                </div>
+                <div class="gantt-row">
+                    <div class="task-name subtask">
+                        4.2 Backtesting and performance validation
+                        <div class="task-dates">Feb 21 - Mar 09</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar upcoming" style="left: 67.6%; width: 8.1%;"></div>
+                    </div>
+                </div>
+
+                <!-- 5. Dashboard and Deployment -->
+                <div class="gantt-row milestone">
+                    <div class="task-name milestone">
+                        5. Dashboard and Deployment
+                        <div class="task-dates">Mar 10 - Apr 06, 2026</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar upcoming" style="left: 76.2%; width: 13.3%;">Upcoming</div>
+                    </div>
+                </div>
+                <div class="gantt-row">
+                    <div class="task-name subtask">
+                        5.1 Build real-time dashboard
+                        <div class="task-dates">Mar 10 - Mar 28</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar upcoming" style="left: 76.2%; width: 9%;"></div>
+                    </div>
+                </div>
+                <div class="gantt-row">
+                    <div class="task-name subtask">
+                        5.2 Deploy system on test environment
+                        <div class="task-dates">Mar 29 - Apr 06</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar upcoming" style="left: 85.7%; width: 3.8%;"></div>
+                    </div>
+                </div>
+
+                <!-- 6. Documentation and Final Presentation -->
+                <div class="gantt-row milestone">
+                    <div class="task-name milestone">
+                        6. Documentation and Final Presentation
+                        <div class="task-dates">Apr 07 - Apr 24, 2026</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar upcoming" style="left: 89.5%; width: 8.6%;">Upcoming</div>
+                    </div>
+                </div>
+                <div class="gantt-row">
+                    <div class="task-name subtask">
+                        6.1 Prepare technical documentation
+                        <div class="task-dates">Apr 07 - Apr 15</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar upcoming" style="left: 89.5%; width: 4.3%;"></div>
+                    </div>
+                </div>
+                <div class="gantt-row">
+                    <div class="task-name subtask">
+                        6.2 Final report and presentation preparation
+                        <div class="task-dates">Apr 16 - Apr 24</div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <div class="gantt-bar upcoming" style="left: 93.8%; width: 4.3%;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="progress-indicator">
+            <div class="progress-header">
+                <span>Overall Project Progress</span>
+                <span style="color: var(--accent-blue); font-weight: bold;">52%</span>
+            </div>
+            <div class="progress-bar-bg">
+                <div class="progress-bar-fill" style="width: 52%;">52% Complete</div>
+            </div>
+        </div>
+
+        <div class="notes-section">
+            <div class="notes-title">⚠️ Current Status & Action Items</div>
+            <ul class="notes-list">
+                <li><strong>Task 3.2 (Tick-level backtesting engine)</strong> is delayed - was due Jan 03, 2026. This should be prioritized.</li>
+                <li><strong>Task 3.3 (Regime detection & sentiment analysis)</strong> is the current scheduled focus (Jan 04-31, 2026).</li>
+                <li><strong>Task 3.4 (Risk management)</strong> appears done early - PositionManager with SL/TP logic implemented.</li>
+                <li><strong>Live trading infrastructure</strong> is complete: LiveEngine, BinanceBroker, Streamer, interfaces.</li>
+                <li><strong>Strategy framework</strong> exists but only RSIThreshold implemented - more strategies needed.</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // Calculate and position today marker
+        const projectStart = new Date('2025-10-01');
+        const projectEnd = new Date('2026-04-24');
+        const today = new Date('2026-01-18');
+        
+        const totalDays = (projectEnd - projectStart) / (1000 * 60 * 60 * 24);
+        const daysElapsed = (today - projectStart) / (1000 * 60 * 60 * 24);
+        const todayPercent = (daysElapsed / totalDays) * 100;
+        
+        // Add today marker to each bar container
+        document.querySelectorAll('.gantt-bar-container').forEach(container => {
+            const marker = document.createElement('div');
+            marker.className = 'today-marker';
+            marker.style.left = `${todayPercent}%`;
+            container.appendChild(marker);
+        });
+        
+        // Add label to first row
+        const firstContainer = document.querySelector('.gantt-bar-container');
+        const label = document.createElement('div');
+        label.className = 'today-label';
+        label.style.left = `${todayPercent}%`;
+        label.textContent = 'TODAY';
+        firstContainer.appendChild(label);
+    </script>
+</body>
+</html>

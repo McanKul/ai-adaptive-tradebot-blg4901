@@ -1,0 +1,39 @@
+========================================================================
+  NEWS ENGINE — LIVE NEWS TEST
+========================================================================
+  Run Date       : 2026-03-09 22:37:14
+  News Source    : DDGNewsSource
+  Analyzer       : GeminiSentimentAnalyzer (gemini-2.5-flash)
+========================================================================
+
+────────────────────────────────────────────────────────────────────────
+  SYMBOL: SOLUSDT
+────────────────────────────────────────────────────────────────────────
+  Articles fetched: 5
+
+  [1] Title : Solana reaches historic milestone against Ethereum in RWA market
+      Source: Crypto on The Street on MSN
+      Date  : 2026-01-27T19:37:14+00:00
+
+  [2] Title : Solana reaches historic milestone against Ethereum in RWA market
+      Source: Crypto
+      Date  : 2026-03-09T18:55:00+00:00
+
+  [3] Title : The New Volume King: BlockDAG Surpasses Early Solana & Kaspa Records as 1000x Potential Ignites
+      Source: Analytics Insight
+      Date  : 2026-03-09T17:44:00+00:00
+
+  [4] Title : Crypto News Today: Solana Processes $650B Stablecoin Volume, Bitcoin Slides on Oil Shock
+      Source: Analytics Insight
+      Date  : 2026-03-09T14:32:00+00:00
+
+  [5] Title : Solana ETFs Build 'Serious Investor Base,' Outpacing Bitcoin in Key Metrics
+      Source: Crypto News
+      Date  : 2026-03-09T13:44:00+00:00
+
+  ► Sentiment Score : 0.7800
+  ► Sentiment Label : Bullish
+
+========================================================================
+  END OF REPORT
+========================================================================

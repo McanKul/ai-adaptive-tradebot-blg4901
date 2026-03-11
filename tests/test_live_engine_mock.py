@@ -23,7 +23,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from live.live_engine import LiveEngine
 from live.live_config import LiveConfig, SizingConfig, ExitConfig, RiskConfig
 from Interfaces.IBroker import IBroker
-from Strategy.binary_base_strategy import BinaryBaseStrategy
+from strategy.binary_base_strategy import BinaryBaseStrategy
 
 # Mock Strategy
 class MockStrategy(BinaryBaseStrategy):
