@@ -9,7 +9,7 @@ This strategy uses the UNIFIED IStrategy interface, meaning:
 - Can use on_bar() for advanced order control
 - Supports TP/SL via ExitManager for intrabar exits
 """
-from Strategy.binary_base_strategy import BinaryBaseStrategy
+from strategy.binary_base_strategy import BinaryBaseStrategy
 from Backtest.exit_manager import ExitManager, ExitConfig
 from Interfaces.IStrategy import StrategyDecision
 from Interfaces.orders import Order, OrderType, OrderSide

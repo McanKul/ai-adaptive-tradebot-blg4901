@@ -1,7 +1,7 @@
 ========================================================================
   NEWS ENGINE — LIVE NEWS TEST
 ========================================================================
-  Run Date       : 2026-03-09 22:37:14
+  Run Date       : 2026-03-11 14:47:30
   News Source    : DDGNewsSource
   Analyzer       : GeminiSentimentAnalyzer (gemini-2.5-flash)
 ========================================================================
@@ -11,27 +11,55 @@
 ────────────────────────────────────────────────────────────────────────
   Articles fetched: 5
 
-  [1] Title : Solana reaches historic milestone against Ethereum in RWA market
-      Source: Crypto on The Street on MSN
-      Date  : 2026-01-27T19:37:14+00:00
+  [1] Title : Solana Price Prediction: 30 Institutions Just Poured $540M Into Solana ETFs — Is a Massive Rally Nex...
+      Source: Cryptonews
+      Date  : 2026-03-10T22:47:31+00:00
 
-  [2] Title : Solana reaches historic milestone against Ethereum in RWA market
-      Source: Crypto
-      Date  : 2026-03-09T18:55:00+00:00
+  [2] Title : Crypto Price Prediction Today 10 March
+      Source: Cryptonews
+      Date  : 2026-03-10T22:47:31+00:00
 
-  [3] Title : The New Volume King: BlockDAG Surpasses Early Solana & Kaspa Records as 1000x Potential Ignites
-      Source: Analytics Insight
-      Date  : 2026-03-09T17:44:00+00:00
+  [3] Title : Oil becomes second-most traded asset on popular crypto exchange
+      Source: TheStreet
+      Date  : 2026-03-10T22:47:31+00:00
 
-  [4] Title : Crypto News Today: Solana Processes $650B Stablecoin Volume, Bitcoin Slides on Oil Shock
-      Source: Analytics Insight
-      Date  : 2026-03-09T14:32:00+00:00
+  [4] Title : Solana, XRP ETFs take different paths as crypto investors pile in
+      Source: CoinDesk
+      Date  : 2026-03-10T15:20:00+00:00
 
-  [5] Title : Solana ETFs Build 'Serious Investor Base,' Outpacing Bitcoin in Key Metrics
-      Source: Crypto News
-      Date  : 2026-03-09T13:44:00+00:00
+  [5] Title : Crypto Crash: 2 Top Coins I'd Consider Buying Before Prices Rebound
+      Source: The Motley Fool
+      Date  : 2026-03-11T05:29:00+00:00
 
   ► Sentiment Score : 0.7800
+  ► Sentiment Label : Bullish
+
+────────────────────────────────────────────────────────────────────────
+  SYMBOL: BTCUSDT
+────────────────────────────────────────────────────────────────────────
+  Articles fetched: 5
+
+  [1] Title : Fintech Stock Block Just Proved That the Ultimate Cryptocurrency Has a Clear Use Case
+      Source: AOL
+      Date  : 2026-03-11T10:54:00+00:00
+
+  [2] Title : Best Crypto Casinos in 2026: Top 5 Bitcoin Gambling Sites with Instant Payouts & No-KYC
+      Source: Muddy River News
+      Date  : 2026-03-05T11:47:41+00:00
+
+  [3] Title : CBI Arrests Key Accused in Massive Gain Bitcoin Scam
+      Source: Rediff.com
+      Date  : 2026-03-11T07:03:00+00:00
+
+  [4] Title : Bitcoin Reclaims $70,000 As Buying Interest Returns; Analysts See Potential Breakout Toward $74,000
+      Source: News18
+      Date  : 2026-03-11T05:33:00+00:00
+
+  [5] Title : Bitcoin's latest crash: correction or death spiral?
+      Source: Business Daily Africa
+      Date  : 2026-03-11T09:13:00+00:00
+
+  ► Sentiment Score : 0.6500
   ► Sentiment Label : Bullish
 
 ========================================================================
