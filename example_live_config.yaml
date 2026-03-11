@@ -1,0 +1,112 @@
+# =====================================================================
+# example_live_config.yaml
+# =====================================================================
+# Live trading configuration file.
+#
+# Usage:
+#     python live_runner.py --config example_live_config.yaml
+#
+# All sections have safe defaults. Uncomment/modify as needed.
+# =====================================================================
+
+# ---------- strategy ----------
+strategy:
+  class: "RSIThreshold"           # Strategy class name (from Strategy/ folder)
+  params:                          # Passed to strategy __init__ as kwargs
+    timeframe: "1m"
+    # rsi_period: 14               # strategy-specific params
+    # overbought: 70
+    # oversold: 30
+
+# ---------- symbols & timeframe ----------
+symbols:
+  - DOGEUSDT
+
+timeframe: "1m"                    # Bar timeframe: 1m | 5m | 15m | 1h | 4h etc.
+name: "RSI_Live"                   # Strategy run name (for logging)
+
+# ---------- position sizing ----------
+sizing:
+  mode: "margin_usd"              # "fixed_qty" | "notional_usd" | "margin_usd"
+  fixed_qty: null                  # Used when mode = fixed_qty
+  notional_usd: null               # Used when mode = notional_usd
+  margin_usd: 10.0                 # Used when mode = margin_usd (collateral per trade)
+  leverage: 5                      # Leverage multiplier
+  leverage_mode: "margin"          # "spot" | "margin"
+
+# ---------- exit rules (TP / SL / Trailing) ----------
+exit:
+  # Take Profit
+  take_profit_pct: 0.02           # 2% from entry (null to disable)
+  take_profit_usd: null            # Absolute USD profit target
+
+  # Stop Loss
+  stop_loss_pct: 0.01             # 1% from entry (null to disable)
+  stop_loss_usd: null              # Absolute USD loss limit
+
+  # Trailing Stop
+  trailing_stop_pct: null          # Trail by this % from peak (null to disable)
+
+  # Time-based exit
+  max_holding_bars: null           # Close after N bars (null to disable)
+
+  # Exchange orders: place SL/TP as orders on Binance
+  # Even with this on, the engine also monitors locally as a safety net
+  use_exchange_orders: true
+
+# ---------- risk management ----------
+risk:
+  max_position_size: 100000.0     # Maximum position quantity per symbol
+  max_position_notional: 5000.0   # Maximum position value in USD
+  max_daily_loss: 50.0             # Maximum daily loss in USD
+  max_daily_loss_pct: 0.10         # Maximum daily loss as fraction of equity (10%)
+  max_drawdown: 0.20               # Kill switch drawdown threshold (20%)
+  max_leverage: 20.0               # Maximum leverage
+  max_concurrent_positions: 3      # Maximum number of open positions
+
+# ---------- support / resistance levels ----------
+levels:
+  enabled: false                   # Enable S/R level computation
+  method: "classic"                # "classic" | "fibonacci" | "woodie" | "camarilla"
+  swing_window: 5                  # Window for swing high/low detection
+  num_levels: 3                    # Number of S/R levels to track
+  min_touches: 1                   # Minimum touches to qualify
+  tolerance_bps: 10.0              # Basis points tolerance for clustering
+  update_interval_bars: 10         # Recalculate levels every N bars
+
+# ---------- execution / exchange settings ----------
+execution:
+  margin_type: "ISOLATED"          # "ISOLATED" | "CROSSED"
+  preload_bars: 100                # Number of historical bars to load at start
+  preload_batch: 10                # Batch size for preload requests
+
+# ---------- per-symbol overrides (multi-coin) ----------
+# Each entry overrides global defaults for that symbol.
+# Omitted fields fall back to global sizing / exit / execution values.
+symbol_routes:
+  # - symbol: BTCUSDT
+  #   leverage: 3
+  #   margin_usd: 20.0
+  #   margin_type: "ISOLATED"
+  #   stop_loss_pct: 0.005
+  #   take_profit_pct: 0.015
+  # - symbol: ETHUSDT
+  #   leverage: 5
+  #   trailing_stop_pct: 0.01
+
+# ---------- global account-level risk ----------
+global_risk:
+  max_account_drawdown_pct: 0.20   # Kill switch: 20% drawdown from peak
+  max_total_exposure_usd: 50000.0  # Total notional across all positions
+  max_correlated_positions: 5      # Max open positions across all symbols
+  persist_path: "logs/live_risk_state.json"  # Daily state persistence path
+
+# ---------- rate limiting ----------
+rate_limit:
+  requests_per_minute: 1000        # Conservative vs Binance 1200 weight/min
+  exchange_info_ttl_sec: 300       # Cache exchange info for 5 minutes
+
+# ---------- API ----------
+api:
+  testnet: false                   # Use Binance testnet
+  # Keys loaded from environment: BINANCE_API_KEY, BINANCE_API_SECRET

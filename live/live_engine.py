@@ -3,222 +3,426 @@ live/live_engine.py
 ===================
 Live trading engine using the unified strategy interface.
 
-This engine runs strategies in real-time with live market data.
-It uses the SAME strategy classes as backtesting, providing
-a consistent development experience.
-
-KEY DIFFERENCES FROM BACKTEST:
-- Uses async streaming for real-time data
-- Connects to real broker for order execution
-- No slippage/cost simulation (real execution)
-- Position management via PositionManager
-
-UNIFIED STRATEGY USAGE:
-======================
-The live engine uses the same IStrategy interface as backtest:
-- Strategies implement generate_signal() or on_bar()
-- The adapter converts outputs to orders
-- TP/SL is handled by the broker, not simulated
+Multi-coin ready with:
+- LiveSupervisor: per-symbol PositionManager with isolated config
+- Startup reconciliation of orphaned exchange positions
+- Global risk manager with JSON persistence
+- Per-symbol S/R levels, leverage, margin type overrides
+- Rate-limited broker for Binance weight safety
 """
-import asyncio
-from utils.bar_store import BarStore
-from Interfaces.IBroker import IBroker
-from Interfaces.strategy_adapter import adapt_strategy_output, AdaptedOutput, StrategyContext
-from live.position_manager import PositionManager
-from live.broker_binance import BinanceBroker
-from live.streamer import Streamer
-from utils.logger import setup_logger
-from Strategy.binary_base_strategy import BinaryBaseStrategy
+from __future__ import annotations
 
-# Mock Strategy Loader for now - in real implementation this might be dynamic
-def load_strategy_instance(strategy_cls, config, bar_store):
-    return strategy_cls(bar_store=bar_store, **config.get("params", {}))
+import asyncio
+import time
+from typing import Optional, Dict, Any
+
+import numpy as np
+
+from utils.bar_store import BarStore
+from utils.logger import setup_logger
+from Interfaces.IBroker import IBroker
+from Interfaces.market_data import Bar
+from Interfaces.orders import OrderSide
+from Interfaces.IStrategy import StrategyDecision
+from Interfaces.strategy_adapter import adapt_strategy_output, StrategyContext
+
+from live.live_config import LiveConfig
+from live.position_manager import PositionManager, LiveSupervisor
+from live.global_risk import LiveGlobalRisk
+from live.streamer import Streamer
 
 log = setup_logger("LiveEngine")
 
 
+def _resolve_strategy_cls(class_name: str):
+    """Dynamically import a strategy class by name."""
+    modules = [
+        "Strategy.RSIThreshold",
+        "Strategy.DonchianATRVolTarget",
+        "Strategy.binary_base_strategy",
+    ]
+    import importlib
+    for mod_path in modules:
+        try:
+            mod = importlib.import_module(mod_path)
+            cls = getattr(mod, class_name, None)
+            if cls is not None:
+                return cls
+            # Also check for a generic "Strategy" export
+            cls = getattr(mod, "Strategy", None)
+            if cls is not None and cls.__name__ == class_name:
+                return cls
+        except ImportError:
+            continue
+    raise ImportError(f"Strategy class '{class_name}' not found")
+
+
+# ======================================================================
+# Live Risk Checker
+# ======================================================================
+class LiveRiskChecker:
+    """
+    Lightweight pre-trade risk checker for live trading.
+
+    Mirrors the checks in Backtest/risk.py (RiskLimits / BasicRiskManager)
+    but operates against live state (exchange balance, position manager).
+    """
+
+    def __init__(self, cfg: LiveConfig):
+        self.risk = cfg.risk
+        self._daily_pnl: float = 0.0
+        self._start_equity: float = 0.0
+        self._kill_switch: bool = False
+        self._kill_reason: str = ""
+        self._day_marker: str = ""
+
+    def set_start_equity(self, equity: float):
+        today = time.strftime("%Y-%m-%d")
+        if today != self._day_marker:
+            self._day_marker = today
+            self._daily_pnl = 0.0
+            self._start_equity = equity
+            self._kill_switch = False
+
+    def record_pnl(self, pnl: float):
+        self._daily_pnl += pnl
+
+    @property
+    def is_kill_switch_active(self) -> bool:
+        return self._kill_switch
+
+    def pre_trade_check(
+        self,
+        symbol: str,
+        qty: float,
+        price: float,
+        leverage: float,
+        open_position_count: int,
+    ) -> tuple[bool, str]:
+        """Return (ok, reason).  ok=True means order is allowed."""
+        if self._kill_switch:
+            return False, f"kill switch: {self._kill_reason}"
+
+        if open_position_count >= self.risk.max_concurrent_positions:
+            return False, "max concurrent positions reached"
+
+        if abs(qty) > self.risk.max_position_size:
+            return False, f"qty {abs(qty):.4f} > limit {self.risk.max_position_size}"
+
+        notional = abs(qty) * price
+        if notional > self.risk.max_position_notional:
+            return False, f"notional {notional:.2f} > limit {self.risk.max_position_notional}"
+
+        if leverage > self.risk.max_leverage:
+            return False, f"leverage {leverage} > limit {self.risk.max_leverage}"
+
+        if self._daily_pnl < -self.risk.max_daily_loss:
+            self._kill_switch = True
+            self._kill_reason = "daily loss limit exceeded"
+            return False, self._kill_reason
+
+        if self._start_equity > 0:
+            loss_pct = -self._daily_pnl / self._start_equity
+            if loss_pct > self.risk.max_daily_loss_pct:
+                self._kill_switch = True
+                self._kill_reason = "daily loss % limit exceeded"
+                return False, self._kill_reason
+
+        return True, ""
+
+
+# ======================================================================
+# Live Engine
+# ======================================================================
 class LiveEngine:
     """
-    Live trading engine with unified strategy support.
-    
-    Uses the same strategy classes as BacktestEngine for consistency.
-    Strategies can implement either:
-    - generate_signal(symbol) -> "+1"/"-1"/None
-    - on_bar(bar, ctx) -> StrategyDecision/List[Order]
-    
-    The engine handles both interfaces via the strategy adapter.
+    Live trading engine with full multi-coin support.
+
+    Uses the same strategy classes as BacktestEngine.
+    All parameters driven by LiveConfig (loaded from YAML).
     """
-    
-    def __init__(self, config, broker: IBroker, strategy_cls):
-        """
-        Initialize LiveEngine.
-        
-        Args:
-            config: Configuration dict with strategy params
-            broker: IBroker implementation for order execution
-            strategy_cls: Strategy class to instantiate
-        """
-        self.cfg = config
+
+    def __init__(self, cfg: LiveConfig, broker: IBroker, strategy_cls=None):
+        self.cfg = cfg
         self.broker = broker
         self.bar_store = BarStore()
 
-        # Configure Strategies
-        self.strategies = []
-        
-        # Support single strategy config or list
-        strategy_configs = [self.cfg] if isinstance(self.cfg, dict) else self.cfg
+        # Resolve strategy class
+        if strategy_cls is None:
+            strategy_cls = _resolve_strategy_cls(cfg.strategy_class)
 
-        for scfg in strategy_configs:
-            # Instantiate strategy
-            instance = load_strategy_instance(strategy_cls, scfg, self.bar_store)
-            self.strategies.append({**scfg, "instance": instance})
-            
-        self.pos_mgr = PositionManager(
-            self.broker, 
-            base_capital=config.get("base_capital", 10.0), 
-            max_concurrent=config.get("max_concurrent", 1)
+        # Instantiate strategy
+        params = dict(cfg.strategy_params)
+        self.strategy = strategy_cls(bar_store=self.bar_store, **params)
+
+        # Per-symbol supervisor (replaces old single PositionManager)
+        self.supervisor = LiveSupervisor(broker=self.broker)
+
+        # Backward-compat alias used by live_runner.py force_close_all
+        self.pos_mgr = self.supervisor
+
+        # Pre-trade risk checker (per-trade limits)
+        self.risk_checker = LiveRiskChecker(cfg)
+
+        # Global risk (account-level, persistent)
+        self.global_risk = LiveGlobalRisk(cfg.global_risk)
+
+        # S/R levels cache: symbol -> SupportResistanceResult
+        self._levels_cache: Dict[str, Any] = {}
+        self._bar_count: Dict[str, int] = {}
+
+        # Streamer
+        self.timeframes = [cfg.timeframe]
+        self.symbols = list(cfg.symbols)
+        self.streamer: Optional[Streamer] = None
+
+    # ------------------------------------------------------------------
+    # S/R level helpers
+    # ------------------------------------------------------------------
+    def _update_levels(self, symbol: str, force: bool = False):
+        """Recompute S/R levels from bar history when enabled."""
+        lcfg = self.cfg.levels
+        if not lcfg.enabled:
+            return
+
+        count = self._bar_count.get(symbol, 0)
+        if not force and count % lcfg.update_interval_bars != 0:
+            return
+
+        bars = self.bar_store.get_recent(symbol, self.cfg.timeframe, limit=500)
+        if not bars or len(bars) < 2 * lcfg.swing_window + 1:
+            return
+
+        highs = np.array([b.get("high", b.get("h", 0.0)) for b in bars], dtype=float)
+        lows = np.array([b.get("low", b.get("l", 0.0)) for b in bars], dtype=float)
+        closes = np.array([b.get("close", b.get("c", 0.0)) for b in bars], dtype=float)
+
+        from utils.levels import detect_swing_levels, compute_pivot_levels
+
+        sr = detect_swing_levels(
+            highs, lows, closes,
+            window=lcfg.swing_window,
+            num_levels=lcfg.num_levels,
+            min_touches=lcfg.min_touches,
+            tolerance_bps=lcfg.tolerance_bps,
         )
-        
-        # Extract timeframes
-        self.timeframes = list(set(s.get("timeframe", "1m") for s in self.strategies))
-        self.streamer = None
-        self.symbols = []
 
+        # Pivot levels from the last completed bar
+        if len(bars) >= 2:
+            prev = bars[-2]
+            pivot_result = compute_pivot_levels(
+                high=float(prev.get("high", prev.get("h", 0))),
+                low=float(prev.get("low", prev.get("l", 0))),
+                close=float(prev.get("close", prev.get("c", 0))),
+                method=lcfg.method,
+            )
+            sr.metadata["pivot_levels"] = pivot_result.levels
+
+        self._levels_cache[symbol] = sr
+        log.info(
+            "%s S/R updated: %d levels (method=%s)",
+            symbol, len(sr.levels), sr.method,
+        )
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
     async def run(self):
-        """
-        Main event loop for live trading.
-        
-        Processes bars as they stream in and executes strategy decisions.
-        """
-        # 1) Resolve Symbols
-        all_coins = []
-        for s in self.strategies:
-            all_coins.extend(s.get("coins", []))
-        
+        """Main event loop for live trading."""
+        # 1) Resolve symbols
         self.symbols = await Streamer.resolve_symbols(
-            self.broker.client, list(set(all_coins)))
+            self.broker.client, list(set(self.cfg.symbols))
+        )
 
-        # 2) Create Streamer
+        # 2) Register per-symbol managers in supervisor
+        for sym in self.symbols:
+            self.supervisor.register_symbol(
+                symbol=sym,
+                sizing_cfg=self.cfg.sizing_for(sym),
+                exit_cfg=self.cfg.exit_for(sym),
+                max_concurrent=1,  # 1 position per symbol
+            )
+
+        # 3) Create streamer
         self.streamer = Streamer(
             self.broker.client,
             self.symbols,
             self.timeframes,
-            bar_store=self.bar_store
+            bar_store=self.bar_store,
         )
 
-        # 3) Preload History
+        # 4) Preload history
         await self.streamer.preload_history(
-            self.symbols, 
+            self.symbols,
             self.timeframes,
-            limit=100,
-            batch=10
+            limit=self.cfg.execution.preload_bars,
+            batch=self.cfg.execution.preload_batch,
         )
 
-        # 4) Start Live Stream
+        # 5) Initial equity for risk tracking
+        try:
+            balance = await self.broker.balance()
+            self.risk_checker.set_start_equity(balance)
+            self.global_risk.set_start_equity(balance)
+            log.info("Initial balance: %.2f USDT", balance)
+        except Exception as e:
+            log.warning("Could not fetch initial balance: %s", e)
+
+        # 6) Compute initial S/R levels
+        for sym in self.symbols:
+            self._bar_count[sym] = 0
+            self._update_levels(sym, force=True)
+
+        # 7) Setup exchange margin/leverage per symbol (using per-symbol config)
+        for sym in self.symbols:
+            try:
+                mt = self.cfg.margin_type_for(sym)
+                if mt == "ISOLATED":
+                    await self.broker.ensure_isolated_margin(sym)
+                elif mt == "CROSSED":
+                    log.warning("%s using CROSSED margin — risk is shared across symbols", sym)
+                await self.broker.set_leverage(sym, self.cfg.leverage_for(sym))
+            except Exception as e:
+                log.warning("%s margin/leverage setup: %s", sym, e)
+
+        # 8) Startup reconciliation — adopt orphaned exchange positions
+        await self.supervisor.reconcile_all(strategy_name=self.cfg.name)
+
+        # 9) Start live stream
         await self.streamer.start()
         log.info(
-            "Live Engine Started: %s symbols | tf=%s",
-            len(self.symbols), 
-            self.timeframes
+            "Live Engine Started: %d symbols | tf=%s | sizing=%s",
+            len(self.symbols),
+            self.cfg.timeframe,
+            self.cfg.sizing.mode,
         )
 
         try:
             while True:
                 bar_data = await self.streamer.get()
                 sym = bar_data["s"]
-                tf = bar_data["k"]["i"]
+                k = bar_data.get("k", {})
+                tf = k.get("i", self.cfg.timeframe)
 
-                for s in self.strategies:
-                    # Check if this strategy cares about this symbol/tf
-                    if sym not in s.get("coins", []) or tf != s.get("timeframe", "1m"):
-                        continue
-                    
-                    await self._process_strategy_bar(s, sym, tf, bar_data)
-                    
+                if tf != self.cfg.timeframe:
+                    continue
+
+                self._bar_count[sym] = self._bar_count.get(sym, 0) + 1
+                self._update_levels(sym)
+
+                await self._process_bar(sym, tf, k)
         finally:
             await self.streamer.stop()
-    
-    async def _process_strategy_bar(self, strategy_config: dict, symbol: str, timeframe: str, bar_data: dict):
-        """
-        Process a bar for a specific strategy.
-        
-        Uses the unified strategy adapter to handle both legacy
-        generate_signal() and modern on_bar() interfaces.
-        
-        Args:
-            strategy_config: Strategy configuration dict
-            symbol: Trading symbol
-            timeframe: Bar timeframe
-            bar_data: Raw bar data from streamer
-        """
-        inst = strategy_config["instance"]
-        exec_params = strategy_config.get("execution", {})
-        
-        # Create a minimal context for on_bar strategies
+
+    # ------------------------------------------------------------------
+    # Bar processing
+    # ------------------------------------------------------------------
+    async def _process_bar(self, symbol: str, timeframe: str, k: dict):
+        """Process a completed bar through the unified strategy adapter."""
+
+        bar = Bar(
+            symbol=symbol,
+            timeframe=timeframe,
+            timestamp_ns=int(k.get("t", k.get("start", 0)) * 1_000_000),
+            open=float(k.get("o", 0)),
+            high=float(k.get("h", 0)),
+            low=float(k.get("l", 0)),
+            close=float(k.get("c", 0)),
+            volume=float(k.get("v", 0)),
+        )
+
+        # Current position from supervisor
+        pos_qty = self.supervisor.position_qty(symbol)
+
+        # Build context (identical structure to backtest)
         ctx = StrategyContext(
             symbol=symbol,
             timeframe=timeframe,
             bar_store=self.bar_store,
-            portfolio=None,  # Live doesn't have portfolio snapshot
-            position=0.0,  # TODO: Get from position manager
+            portfolio=None,
+            position=pos_qty,
             equity=0.0,
             cash=0.0,
-            timestamp_ns=int(bar_data["k"]["t"] * 1_000_000) if "t" in bar_data.get("k", {}) else 0,
+            timestamp_ns=bar.timestamp_ns,
+            metadata={
+                "levels": self._levels_cache.get(symbol),
+            },
         )
-        
-        # Try modern on_bar first, fall back to generate_signal
+
+        # Unified strategy adapter — same function used in backtest engine
+        adapted = adapt_strategy_output(
+            strategy=self.strategy,
+            bar=bar,
+            ctx=ctx,
+            position_size=1.0,
+            strategy_id=self.cfg.name,
+        )
+
+        # Extract signal / direction
         signal = None
-        
-        if hasattr(inst, 'on_bar') and callable(inst.on_bar):
-            try:
-                # Create a mock bar for on_bar
-                from Interfaces.market_data import Bar
-                k = bar_data.get("k", {})
-                bar = Bar(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    timestamp_ns=int(k.get("t", 0) * 1_000_000),
-                    open=float(k.get("o", 0)),
-                    high=float(k.get("h", 0)),
-                    low=float(k.get("l", 0)),
-                    close=float(k.get("c", 0)),
-                    volume=float(k.get("v", 0)),
-                )
-                
-                result = inst.on_bar(bar, ctx)
-                
-                # Extract signal from result
-                from Interfaces.IStrategy import StrategyDecision
-                if isinstance(result, StrategyDecision):
-                    if result.has_signal:
-                        signal = result.signal
-                    elif result.has_orders:
-                        # Determine signal from orders
-                        for order in result.orders:
-                            if not order.metadata.get("reduce_only", False):
-                                from Interfaces.orders import OrderSide
-                                signal = "+1" if order.side == OrderSide.BUY else "-1"
-                                break
-            except Exception as e:
-                log.warning(f"on_bar failed, falling back to generate_signal: {e}")
-                signal = inst.generate_signal(symbol)
-        else:
-            # Use legacy generate_signal
-            signal = inst.generate_signal(symbol)
+        if adapted.decision and adapted.decision.has_signal:
+            signal = adapted.decision.signal
+        elif adapted.decision and adapted.decision.has_orders:
+            for order in adapted.decision.orders:
+                if not order.reduce_only:
+                    signal = "+1" if order.side == OrderSide.BUY else "-1"
+                    break
 
         if signal:
-            # Map signal to direction
             direction = 1 if signal in ("+1", "1") else -1
-            
-            await self.pos_mgr.open_position(
-                symbol,
-                direction,
-                strategy_config.get("name", "UnknownStrategy"),
-                leverage=exec_params.get("leverage", 1),
-                sl_pct=exec_params.get("sl_pct", 1.0),
-                tp_pct=exec_params.get("tp_pct", 1.0),
-                expire_sec=exec_params.get("expire_sec", 3600),
-                timeframes=timeframe
+            mark_price = bar.close
+
+            # Per-symbol sizing config
+            sym_sizing = self.cfg.sizing_for(symbol)
+            qty = sym_sizing.compute_qty(mark_price)
+            leverage = self.cfg.leverage_for(symbol)
+
+            # Pre-trade risk check
+            ok, reason = self.risk_checker.pre_trade_check(
+                symbol=symbol,
+                qty=qty,
+                price=mark_price,
+                leverage=leverage,
+                open_position_count=len(self.supervisor.open_positions),
+            )
+            if not ok:
+                log.warning("Order REJECTED for %s: %s", symbol, reason)
+                return
+
+            # Global account-level risk check
+            try:
+                balance = await self.broker.balance()
+                total_exposure = sum(
+                    p.entry * p.qty
+                    for p in self.supervisor.open_positions.values()
+                )
+                ok, reason = self.global_risk.check_account_risk(
+                    current_equity=balance,
+                    total_exposure_usd=total_exposure + qty * mark_price,
+                    open_position_count=len(self.supervisor.open_positions),
+                )
+                if not ok:
+                    log.warning("GLOBAL RISK REJECTED for %s: %s", symbol, reason)
+                    return
+            except Exception as e:
+                log.warning("Balance fetch for global risk failed: %s", e)
+
+            # Open via supervisor (per-symbol manager)
+            await self.supervisor.open_position(
+                symbol=symbol,
+                side=direction,
+                strategy_name=self.cfg.name,
+                leverage=leverage,
+                timeframe=timeframe,
+                levels=self._levels_cache.get(symbol),
             )
         else:
-            await self.pos_mgr.update_all()
+            # No signal — monitor existing positions & record closed P&L
+            prev_history_len = len(self.supervisor.history)
+            await self.supervisor.update_all()
+            # Record realized PnL from newly closed positions
+            for pos in self.supervisor.history[prev_history_len:]:
+                if pos.exit is not None:
+                    pnl = pos.unrealized_pnl(pos.exit)
+                    self.risk_checker.record_pnl(pnl)
+                    self.global_risk.record_pnl(pnl)

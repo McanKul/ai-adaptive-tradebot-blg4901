@@ -1,52 +1,85 @@
+"""
+live_runner.py
+==============
+Entry-point for live trading.
+
+Usage:
+    python live_runner.py                              # uses example_live_config.yaml
+    python live_runner.py --config my_config.yaml      # custom config
+"""
 import asyncio
+import argparse
 import os
+import sys
+
 from binance.client import AsyncClient
+
+from live.live_config import LiveConfig
 from live.live_engine import LiveEngine
 from live.broker_binance import BinanceBroker
 from live.binance_client import BinanceClient
-from strategy.RSIThreshold import Strategy # Example strategy import
-
-# Example Configuration
-# TODO: for future - load from external file
-
-CONFIG = {
-    "coins": ["DOGEUSDT"],
-    "timeframe": "1m",
-    "name": "RSI_Threshold_Strategy",
-    "params": { 
-        "timeframe": "1m", # Pass to strategy init too if needed
-    },
-    "execution": {
-        "leverage": 5,
-        "sl_pct": 2.0,
-        "tp_pct": 4.0,
-        # "expire_sec": 3600 # Removed from logic
-    }
-}
+from live.rate_limiter import AsyncRateLimiter
 
 
-async def main():
-    # Load API keys from env or secure source
-    api_key = os.getenv("BINANCE_API_KEY", "") 
-    api_secret = os.getenv("BINANCE_API_SECRET", "") 
-    
+async def main(config_path: str):
+    # 1) Load config
+    cfg = LiveConfig.from_yaml(config_path)
+    print(f"Config loaded: {config_path}")
+    print(f"  strategy : {cfg.strategy_class}")
+    print(f"  symbols  : {cfg.symbols}")
+    print(f"  timeframe: {cfg.timeframe}")
+    print(f"  leverage : {cfg.sizing.leverage}x")
+    print(f"  sizing   : {cfg.sizing.mode} (margin={cfg.sizing.margin_usd} USD)")
+    print(f"  TP       : {cfg.exit.take_profit_pct}  SL: {cfg.exit.stop_loss_pct}")
+    print(f"  risk     : max_pos={cfg.risk.max_concurrent_positions}, "
+          f"max_daily_loss={cfg.risk.max_daily_loss}")
+
+    # 2) API keys
+    api_key = os.getenv("BINANCE_API_KEY", "")
+    api_secret = os.getenv("BINANCE_API_SECRET", "")
+
     if not api_key:
-        print("WARNING: BINANCE_API_KEY not found in env. Client might fail or be read-only.")
+        print("WARNING: BINANCE_API_KEY not set. Client may fail or be read-only.")
 
-    raw_client = await AsyncClient.create(api_key, api_secret)
+    testnet = cfg.testnet
+    raw_client = await AsyncClient.create(api_key, api_secret, testnet=testnet)
     client = BinanceClient(raw_client)
-    broker = BinanceBroker(client)
-    
-    engine = LiveEngine(CONFIG, broker, Strategy)
-    
+    rl = AsyncRateLimiter(max_per_minute=cfg.rate_limit.requests_per_minute)
+    broker = BinanceBroker(client, rate_limiter=rl,
+                           exchange_info_ttl=cfg.rate_limit.exchange_info_ttl_sec)
+
+    # 3) Start engine
+    engine = LiveEngine(cfg, broker)
+
     try:
         await engine.run()
     except KeyboardInterrupt:
-        print("Stopping...")
+        print("\nStopping (KeyboardInterrupt)...")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
-        await client.close_connection() # Calls wrapper close which calls raw close
+        # Force close open positions on shutdown
+        try:
+            await engine.pos_mgr.force_close_all()
+        except Exception:
+            pass
+        await client.close_connection()
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="Live trading runner")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="example_live_config.yaml",
+        help="Path to YAML config file",
+    )
+    args = parser.parse_args()
+
+    if not os.path.exists(args.config):
+        print(f"Config file not found: {args.config}")
+        sys.exit(1)
+
+    asyncio.run(main(args.config))

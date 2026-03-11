@@ -20,6 +20,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from Interfaces.IBroker import IBroker
 from live.position_manager import PositionManager
+from live.live_config import SizingConfig, ExitConfig
 
 
 def make_filters(step_size: str = "0.001", tick_size: str = "0.01"):
@@ -34,58 +35,69 @@ def make_filters(step_size: str = "0.001", tick_size: str = "0.01"):
     }
 
 
-async def _open_pos(pm: PositionManager):
+def _make_pm(max_concurrent=2, leverage=10, margin_usd=10.0,
+             sl_pct=0.01, tp_pct=0.01):
+    broker = AsyncMock(spec=IBroker)
+    broker.client = AsyncMock()
+    sizing = SizingConfig(leverage=leverage, margin_usd=margin_usd)
+    exit_cfg = ExitConfig(stop_loss_pct=sl_pct, take_profit_pct=tp_pct,
+                          use_exchange_orders=True)
+    pm = PositionManager(broker, sizing_cfg=sizing, exit_cfg=exit_cfg,
+                         max_concurrent=max_concurrent)
+    return pm
+
+
+async def _open_pos(pm: PositionManager, leverage: int = 10):
     broker = pm.broker
+    filters = make_filters()
     broker.client.futures_mark_price.return_value = {"markPrice": "100.0"}
-    broker.client.futures_exchange_info.return_value = make_filters()
+    broker.client.futures_exchange_info.return_value = filters
+    broker.exchange_info = AsyncMock(return_value=filters)
     broker.ensure_isolated_margin = AsyncMock()
     broker.set_leverage = AsyncMock()
     broker.market_order = AsyncMock()
-    broker.place_stop_market = AsyncMock()
-    broker.place_take_profit = AsyncMock()
+    broker.place_stop_market = AsyncMock(return_value=1001)
+    broker.place_take_profit = AsyncMock(return_value=2001)
+    broker.cancel_order = AsyncMock()
+    broker.get_open_orders = AsyncMock(return_value=[])
 
     ok = await pm.open_position(
         symbol="BTCUSDT", side=1, strategy_name="TestStrat",
-        leverage=10, sl_pct=1.0, tp_pct=1.0, timeframes="1m"
+        leverage=leverage, timeframe="1m"
     )
     return ok
 
 
-def test_open_position_happy_path(event_loop=None):
-    broker = AsyncMock(spec=IBroker)
-    broker.client = AsyncMock()
-    pm = PositionManager(broker, base_capital=10.0, max_concurrent=2)
-
+def test_open_position_happy_path():
+    pm = _make_pm()
     ok = asyncio.run(_open_pos(pm))
     assert ok is True
-    # Should have one open position
     assert len(pm.open_positions) == 1
 
 
 def test_update_all_triggers_close_on_tp():
-    broker = AsyncMock(spec=IBroker)
-    broker.client = AsyncMock()
-    pm = PositionManager(broker, base_capital=10.0, max_concurrent=2)
-
+    pm = _make_pm()
     asyncio.run(_open_pos(pm))
     # Mark price above TP to trigger close
-    broker.get_mark_price = AsyncMock(return_value=1e9)
-    broker.close_position = AsyncMock()
+    pm.broker.get_mark_price = AsyncMock(return_value=1e9)
+    pm.broker.position_amt = AsyncMock(return_value=10.0)  # still open on exchange
+    pm.broker.close_position = AsyncMock()
+    pm.broker.cancel_order = AsyncMock()
+    pm.broker.client.futures_cancel_all_open_orders = AsyncMock()
 
     asyncio.run(pm.update_all())
-    broker.close_position.assert_awaited()
+    pm.broker.close_position.assert_awaited()
     assert len(pm.open_positions) == 0
 
 
 def test_force_close_all_clears_positions():
-    broker = AsyncMock(spec=IBroker)
-    broker.client = AsyncMock()
-    pm = PositionManager(broker, base_capital=10.0, max_concurrent=2)
-
+    pm = _make_pm()
     asyncio.run(_open_pos(pm))
     assert len(pm.open_positions) == 1
 
-    broker.close_position = AsyncMock()
+    pm.broker.close_position = AsyncMock()
+    pm.broker.cancel_order = AsyncMock()
+    pm.broker.client.futures_cancel_all_open_orders = AsyncMock()
     asyncio.run(pm.force_close_all())
     assert len(pm.open_positions) == 0
     assert len(pm.history) == 1

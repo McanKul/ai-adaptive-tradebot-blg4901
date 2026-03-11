@@ -47,16 +47,17 @@ def test_market_order_calls_underlying():
 
 def test_place_stop_market_formats_price():
     c = _client_with_exchange_info("0.01")
-    c.futures_create_order = AsyncMock()
+    c.futures_create_order = AsyncMock(return_value={"orderId": 12345})
     broker = BinanceBroker(c)
 
     import asyncio
-    asyncio.run(broker.place_stop_market("BTCUSDT", "SELL", 123.4567))
+    oid = asyncio.run(broker.place_stop_market("BTCUSDT", "SELL", 123.4567))
     call = c.futures_create_order.await_args
     kwargs = call.kwargs
     # With tick 0.01 price should be rounded to 2 decimals
     assert kwargs["stopPrice"].count(".") == 1
     assert len(kwargs["stopPrice"].split(".")[-1]) == 2
+    assert oid == 12345
 
 
 def test_ensure_isolated_ignores_already_isolated():
