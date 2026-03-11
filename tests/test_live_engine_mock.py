@@ -21,6 +21,7 @@ sys.modules["binance.enums"].FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET = "TAKE_PROFIT
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from live.live_engine import LiveEngine
+from live.live_config import LiveConfig, SizingConfig, ExitConfig, RiskConfig
 from Interfaces.IBroker import IBroker
 from strategy.binary_base_strategy import BinaryBaseStrategy
 
@@ -53,15 +54,19 @@ class TestLiveEngine(unittest.IsolatedAsyncioTestCase):
 
         broker = AsyncMock(spec=IBroker)
         broker.client = mock_client
-        
-        # 2. Config
-        cfg = {
-            "coins": ["BTCUSDT"],
-            "timeframe": "1m",
-            "name": "TestStrategy",
-            "params": {"timeframe": "1m"},
-            "execution": {"leverage": 1, "sl_pct": 1, "tp_pct": 1}
-        }
+        broker.balance = AsyncMock(return_value=1000.0)
+
+        # 2. Config (using LiveConfig)
+        cfg = LiveConfig(
+            strategy_class="MockStrategy",
+            strategy_params={"timeframe": "1m"},
+            symbols=["BTCUSDT"],
+            timeframe="1m",
+            name="TestStrategy",
+            sizing=SizingConfig(leverage=1, margin_usd=10.0),
+            exit=ExitConfig(stop_loss_pct=0.01, take_profit_pct=0.01),
+            risk=RiskConfig(max_concurrent_positions=1),
+        )
 
         # 3. Create Engine
         engine = LiveEngine(cfg, broker, MockStrategy)

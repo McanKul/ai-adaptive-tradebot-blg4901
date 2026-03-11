@@ -9,6 +9,8 @@ Signal combination logic:
 - Mixed or neutral signals             → NO ACTION
 - No news engine configured            → strategy signal only
 """
+from __future__ import annotations
+
 import asyncio
 from typing import Optional
 
@@ -166,7 +168,16 @@ class LiveEngine:
             self.broker.client, list(set(all_coins))
         )
 
-        # 2) Create Streamer
+        # 2) Register per-symbol managers in supervisor
+        for sym in self.symbols:
+            self.supervisor.register_symbol(
+                symbol=sym,
+                sizing_cfg=self.cfg.sizing_for(sym),
+                exit_cfg=self.cfg.exit_for(sym),
+                max_concurrent=1,  # 1 position per symbol
+            )
+
+        # 3) Create streamer
         self.streamer = Streamer(
             self.broker.client,
             self.symbols,
@@ -174,7 +185,7 @@ class LiveEngine:
             bar_store=self.bar_store,
         )
 
-        # 3) Preload History
+        # 4) Preload history
         await self.streamer.preload_history(
             self.symbols, self.timeframes,
             limit=100, batch=10,

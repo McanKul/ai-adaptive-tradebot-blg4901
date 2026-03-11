@@ -19,17 +19,31 @@ class BinanceClient(IClient):
         
     async def futures_cancel_all_open_orders(self, symbol: str) -> Any:
         return await self._client.futures_cancel_all_open_orders(symbol=symbol)
-        
+
+    async def futures_cancel_order(self, symbol: str, orderId: int) -> Any:
+        return await self._client.futures_cancel_order(symbol=symbol, orderId=orderId)
+
+    async def futures_get_open_orders(self, symbol: str) -> List[Dict[str, Any]]:
+        return await self._client.futures_get_open_orders(symbol=symbol)
+
+    async def futures_position_information(self, symbol: str) -> List[Dict[str, Any]]:
+        return await self._client.futures_position_information(symbol=symbol)
+
+    async def futures_account_balance(self) -> List[Dict[str, Any]]:
+        return await self._client.futures_account_balance()
+
+    async def futures_change_margin_type(self, symbol: str, marginType: str) -> Any:
+        return await self._client.futures_change_margin_type(symbol=symbol, marginType=marginType)
+
+    async def futures_change_leverage(self, symbol: str, leverage: int) -> Any:
+        return await self._client.futures_change_leverage(symbol=symbol, leverage=leverage)
+
     async def futures_klines(self, symbol: str, interval: str, limit: int) -> List[Any]:
         return await self._client.futures_klines(symbol=symbol, interval=interval, limit=limit)
         
     async def close_connection(self):
         await self._client.close_connection()
-        
-    # Accessor for raw client if needed (e.g. for SocketManager)
-    # The user said "Client will be implemented with an interface and an implementation".
-    # SocketManager takes the raw client. Ideally SocketManager logic should also be wrapped or IStreamer should handle it.
-    # streamer.py uses BinanceSocketManager(self.client). If self.client is BinanceClientWrapper, BSM won't work unless we expose raw.
+
     @property
     def raw_client(self):
         return self._client

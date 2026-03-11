@@ -1,22 +1,56 @@
+"""
+live/position_manager.py
+========================
+Config-driven position management for live trading.
+
+Responsibilities:
+- Open positions with sizing computed from SizingConfig
+- Place exchange-level SL / TP orders and track their IDs
+- Cancel counter-order when one side fills (OCO-like lifecycle)
+- Monitor positions for local exit rules (trailing stop, max bars, USD targets)
+- Startup reconciliation: detect orphaned exchange positions
+- LiveSupervisor: one PositionManager per symbol with per-symbol config
+"""
+from __future__ import annotations
+
 import math
 import time
+from typing import Dict, List, Optional, Any
 
-# from binance.exceptions import BinanceAPIException # Exceptions should ideally be handled or wrapped, but keeping for now as they bubble up
-# from binance.enums import * # Enums are used
-from binance.enums import *
+from binance.enums import (
+    SIDE_BUY, SIDE_SELL,
+    FUTURE_ORDER_TYPE_MARKET,
+)
 from utils.logger import setup_logger
-log = setup_logger("PositionManager")
 from Interfaces.IBroker import IBroker
 from Interfaces.IClient import IClient
+from live.live_config import SizingConfig, ExitConfig
 
+log = setup_logger("PositionManager")
+
+
+# ======================================================================
+# Position dataclass
+# ======================================================================
 class Position:
+    """Represents a single open position with tracked exchange order IDs."""
 
-    def __init__(self, client: IClient, symbol: str, side: str,
-                 qty: float, entry_price: float,
-                 sl_price: float = None, tp_price: float = None,
-                 opened_ts: float = None,
-                 tick: int = None, strategy: str = None,
-                 timeframes: str = "1h"):
+    def __init__(
+        self,
+        client: IClient,
+        symbol: str,
+        side: str,
+        qty: float,
+        entry_price: float,
+        sl_price: Optional[float] = None,
+        tp_price: Optional[float] = None,
+        opened_ts: Optional[float] = None,
+        tick: Optional[float] = None,
+        strategy: Optional[str] = None,
+        timeframe: str = "1h",
+        bar_index: int = 0,
+        levels: Optional[Any] = None,
+    ):
         self.client = client
         self.symbol = symbol
         self.side = side
@@ -26,121 +60,228 @@ class Position:
         self.tp = tp_price
         self.open_ts = opened_ts or time.time()
         self.closed = False
-        self.exit_ts = None
-        self.exit = None
-        self.exit_type = None
+        self.exit_ts: Optional[float] = None
+        self.exit: Optional[float] = None
+        self.exit_type: Optional[str] = None
         self.tick = tick
-        self.timeframes = timeframes
+        self.timeframe = timeframe
         self.strategy = strategy
-        # Expiration removed
+        self.bar_index = bar_index
+        self.bars_held = 0
+        self.levels = levels
 
-    async def _current_price(self) -> float:
-        res = await self.client.futures_mark_price(symbol=self.symbol)
-        return float(res["markPrice"])
+        # Exchange order IDs for safe lifecycle management
+        self.sl_order_id: Optional[int] = None
+        self.tp_order_id: Optional[int] = None
 
-    async def _close_market(self):
-        opp = SIDE_SELL if self.side == SIDE_BUY else SIDE_BUY
-        try:
-            await self.client.futures_create_order(
-                symbol=self.symbol,
-                side=opp,
-                type=FUTURE_ORDER_TYPE_MARKET,
-                quantity=f"{self.qty:.{abs(int(math.log10(self.tick)))}f}"
-            )
-        except Exception as e:
-            log.error("Market close error %s: %s", self.symbol, e)
-            raise
+        # Trailing stop tracking
+        self.peak_price = entry_price
+        self.peak_pnl: float = 0.0
 
-    async def check_exit(self, now: float) -> bool:
-        if self.closed:
-            return True
+    @property
+    def is_long(self) -> bool:
+        return self.side == SIDE_BUY
 
-        price = await self._current_price()
+    def unrealized_pnl(self, current_price: float) -> float:
+        if self.is_long:
+            return (current_price - self.entry) * self.qty
+        return (self.entry - current_price) * self.qty
 
-        if self.tp and (
-            (self.side == SIDE_BUY and price >= self.tp) or
-            (self.side == SIDE_SELL and price <= self.tp)
-        ):
-            await self._close_market()
-            self.closed = True
-            self.exit_type = "TP"
+    def unrealized_pnl_pct(self, current_price: float) -> float:
+        notional = self.entry * self.qty
+        if notional == 0:
+            return 0.0
+        return self.unrealized_pnl(current_price) / notional
 
-        elif self.sl and (
-            (self.side == SIDE_BUY and price <= self.sl) or
-            (self.side == SIDE_SELL and price >= self.sl)
-        ):
-            await self._close_market()
-            self.closed = True
-            self.exit_type = "SL"
-
-        if self.closed:
-            self.exit_ts = now
-            self.exit = price
-            log.info("%s [%s] closed @ %.8f (%s)",
-                     self.symbol, self.strategy or self.side, price, self.exit_type)
-            try:
-                await self.client.futures_cancel_all_open_orders(symbol=self.symbol)
-            except Exception:
-                log.info("%s error cancelling orders", self.symbol)
-
-        return self.closed
+    def update_peak(self, current_price: float):
+        pnl = self.unrealized_pnl(current_price)
+        if self.is_long:
+            if current_price > self.peak_price:
+                self.peak_price = current_price
+                self.peak_pnl = pnl
+        else:
+            if current_price < self.peak_price:
+                self.peak_price = current_price
+                self.peak_pnl = pnl
 
 
+# ======================================================================
+# Position Manager
+# ======================================================================
 class PositionManager:
+    """
+    Config-driven position manager.
 
-    def __init__(self, broker: IBroker, base_capital: float = 10.0, max_concurrent: int = 1):
+    Uses SizingConfig for position sizing and ExitConfig for TP/SL rules.
+    """
+
+    def __init__(
+        self,
+        broker: IBroker,
+        sizing_cfg: SizingConfig,
+        exit_cfg: ExitConfig,
+        max_concurrent: int = 3,
+        symbol: Optional[str] = None,
+    ):
         self.broker = broker
-        # self.client = broker.client # REMOVED: Use broker.client directly
-        self.base_cap = base_capital
-
+        self.sizing_cfg = sizing_cfg
+        self.exit_cfg = exit_cfg
         self.max_open = max_concurrent
-        self.open_positions = {}
-        self.history = []
+        self.symbol: Optional[str] = symbol
 
-    def __round_price(self, raw, tick, up=False):
+        self.open_positions: Dict[tuple, Position] = {}
+        self.history: List[Position] = []
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def position_qty(self, symbol: str) -> float:
+        """Return signed qty for a symbol (positive=long, negative=short)."""
+        for (sym, _), pos in self.open_positions.items():
+            if sym == symbol and not pos.closed:
+                return pos.qty if pos.is_long else -pos.qty
+        return 0.0
+
+    @staticmethod
+    def _round_price(raw: float, tick: float, up: bool = False) -> float:
+        if tick <= 0:
+            return raw
         factor = 1 / tick
         return (math.ceil if up else math.floor)(raw * factor) / factor
 
-
-    async def __symbol_filters(self, symbol: str, qty_f: float) -> tuple[float, float]:
+    async def _symbol_filters(self, symbol: str, qty_f: float) -> tuple[float, float]:
+        """Query exchange LOT_SIZE & PRICE_FILTER for *symbol* (cached)."""
         try:
-            # Use broker.client accessor
-            info = await self.broker.client.futures_exchange_info()
+            if hasattr(self.broker, 'exchange_info'):
+                info = await self.broker.exchange_info()
+            else:
+                info = await self.broker.client.futures_exchange_info()
             step = tick = None
-            for s in info['symbols']:
-                if s['symbol'] == symbol:
-                    for f in s['filters']:
-                        if f['filterType'] == 'LOT_SIZE':
-                            lot = float(f['stepSize'])
+            for s in info["symbols"]:
+                if s["symbol"] == symbol:
+                    for f in s["filters"]:
+                        if f["filterType"] == "LOT_SIZE":
+                            lot = float(f["stepSize"])
                             factor = 1 / lot
                             step = math.floor(qty_f * factor) / factor
-                        if f['filterType'] == 'PRICE_FILTER':
-                            tick = float(f['tickSize'])
-                    if tick and step:
+                        if f["filterType"] == "PRICE_FILTER":
+                            tick = float(f["tickSize"])
+                    if tick is not None and step is not None:
                         return step, tick
             return 0.0, 0.0
-
         except Exception as e:
             log.error("Failed to get LOT_SIZE/PRICE_FILTER %s: %s", symbol, e)
             return 0.0, 0.0
 
-    async def open_position(self, symbol: str, side: int, strategy_name: str, leverage: int, sl_pct: float, tp_pct: float, timeframes: str):
-        # expire_sec removed
+    # ------------------------------------------------------------------
+    # Compute SL / TP prices
+    # ------------------------------------------------------------------
+    def _compute_sl_tp_prices(
+        self,
+        side_str: str,
+        entry_price: float,
+        tick: float,
+    ) -> tuple[Optional[float], Optional[float]]:
+        """
+        Compute SL and TP prices from ExitConfig.
+
+        Supports:
+        - Percentage-based (stop_loss_pct, take_profit_pct)
+        - USD-based (stop_loss_usd, take_profit_usd) — converted to price delta
+
+        Returns (sl_price, tp_price), either may be None.
+        """
+        sl_price: Optional[float] = None
+        tp_price: Optional[float] = None
+        ecfg = self.exit_cfg
+
+        # --- Stop Loss ---
+        if ecfg.stop_loss_pct is not None:
+            if side_str == SIDE_BUY:
+                sl_price = entry_price * (1 - ecfg.stop_loss_pct)
+            else:
+                sl_price = entry_price * (1 + ecfg.stop_loss_pct)
+
+        elif ecfg.stop_loss_usd is not None and self.sizing_cfg.margin_usd > 0:
+            # Convert USD loss to price delta:  delta_price = loss_usd / qty
+            # qty ≈ margin * leverage / price
+            leverage = self.sizing_cfg.leverage
+            notional = self.sizing_cfg.margin_usd * leverage
+            approx_qty = notional / entry_price if entry_price > 0 else 1.0
+            delta = ecfg.stop_loss_usd / approx_qty if approx_qty > 0 else 0.0
+            if side_str == SIDE_BUY:
+                sl_price = entry_price - delta
+            else:
+                sl_price = entry_price + delta
+
+        # --- Take Profit ---
+        if ecfg.take_profit_pct is not None:
+            if side_str == SIDE_BUY:
+                tp_price = entry_price * (1 + ecfg.take_profit_pct)
+            else:
+                tp_price = entry_price * (1 - ecfg.take_profit_pct)
+
+        elif ecfg.take_profit_usd is not None and self.sizing_cfg.margin_usd > 0:
+            leverage = self.sizing_cfg.leverage
+            notional = self.sizing_cfg.margin_usd * leverage
+            approx_qty = notional / entry_price if entry_price > 0 else 1.0
+            delta = ecfg.take_profit_usd / approx_qty if approx_qty > 0 else 0.0
+            if side_str == SIDE_BUY:
+                tp_price = entry_price + delta
+            else:
+                tp_price = entry_price - delta
+
+        # Round to tick
+        if sl_price is not None and tick > 0:
+            sl_price = self._round_price(sl_price, tick, up=(side_str == SIDE_SELL))
+        if tp_price is not None and tick > 0:
+            tp_price = self._round_price(tp_price, tick, up=(side_str == SIDE_BUY))
+
+        return sl_price, tp_price
+
+    # ------------------------------------------------------------------
+    # Open position
+    # ------------------------------------------------------------------
+    async def open_position(
+        self,
+        symbol: str,
+        side: int,
+        strategy_name: str,
+        leverage: int,
+        timeframe: str,
+        levels: Optional[Any] = None,
+    ) -> bool:
+        """
+        Open a new position using SizingConfig & ExitConfig.
+
+        Args:
+            symbol: Trading pair
+            side: 1 for long, -1 for short
+            strategy_name: For logging / tracking
+            leverage: Leverage multiplier
+            timeframe: Bar timeframe
+            levels: Optional SupportResistanceResult
+        """
         key = (symbol, strategy_name)
         if key in self.open_positions or len(self.open_positions) >= self.max_open:
             return False
 
-        mark_price = float((await self.broker.client.futures_mark_price(symbol=symbol))["markPrice"])
-        notional = self.base_cap * leverage
-        raw_qty = notional / mark_price
-        qty, tick = await self.__symbol_filters(symbol, raw_qty)
+        # 1) Get mark price
+        mark_price = float(
+            (await self.broker.client.futures_mark_price(symbol=symbol))["markPrice"]
+        )
+
+        # 2) Compute quantity from SizingConfig
+        raw_qty = self.sizing_cfg.compute_qty(mark_price)
+        qty, tick = await self._symbol_filters(symbol, raw_qty)
         if qty <= 0:
+            log.warning("%s qty rounded to 0 — skipping", symbol)
             return False
 
         side_str = SIDE_BUY if side == 1 else SIDE_SELL
         opp_str = SIDE_SELL if side_str == SIDE_BUY else SIDE_BUY
 
-
+        # 3) Margin & leverage on exchange
         try:
             await self.broker.ensure_isolated_margin(symbol)
             await self.broker.set_leverage(symbol, leverage)
@@ -148,77 +289,186 @@ class PositionManager:
             log.error("%s margin/leverage error: %s", symbol, e)
             return False
 
-        raw_sl = mark_price * (1 - sl_pct/leverage / 100) if side_str == SIDE_BUY else mark_price * (1 + sl_pct/leverage / 100)
-        raw_tp = mark_price * (1 + tp_pct/leverage / 100) if side_str == SIDE_BUY else mark_price * (1 - tp_pct/leverage / 100)
+        # 4) Compute SL/TP prices from ExitConfig
+        sl_price, tp_price = self._compute_sl_tp_prices(side_str, mark_price, tick)
 
-        price_sl = self.__round_price(raw_sl, tick, up=(side_str == SIDE_SELL))
-        price_tp = self.__round_price(raw_tp, tick, up=(side_str == SIDE_BUY))
-
+        # 5) Place orders — capture exchange order IDs
+        sl_order_id: Optional[int] = None
+        tp_order_id: Optional[int] = None
         try:
             await self.broker.market_order(symbol, side_str, qty)
-            await self.broker.place_stop_market(symbol, opp_str, price_sl)
-            await self.broker.place_take_profit(symbol, opp_str, price_tp)
-        except Exception as e:
-             log.error("Order placement failed %s: %s", symbol, e)
-             return False
 
-        # Pass broker.client to Position
-        pos = Position(self.broker.client, symbol, side_str, qty, mark_price, price_sl, price_tp, time.time(), tick, strategy=strategy_name, timeframes=timeframes)
+            if self.exit_cfg.use_exchange_orders:
+                if sl_price is not None:
+                    sl_order_id = await self.broker.place_stop_market(symbol, opp_str, sl_price)
+                if tp_price is not None:
+                    tp_order_id = await self.broker.place_take_profit(symbol, opp_str, tp_price)
+        except Exception as e:
+            log.error("Order placement failed %s: %s", symbol, e)
+            return False
+
+        # 6) Track position
+        pos = Position(
+            client=self.broker.client,
+            symbol=symbol,
+            side=side_str,
+            qty=qty,
+            entry_price=mark_price,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            opened_ts=time.time(),
+            tick=tick,
+            strategy=strategy_name,
+            timeframe=timeframe,
+            levels=levels,
+        )
+        pos.sl_order_id = sl_order_id
+        pos.tp_order_id = tp_order_id
         self.open_positions[key] = pos
-        log.info("%s [%s] [%s] Open pos: qty=%.4f, SL=%.8f, TP=%.8f",
-                 symbol, strategy_name,timeframes, qty, price_sl, price_tp)
+
+        log.info(
+            "%s [%s] [%s] OPEN %s qty=%.4f @ %.8f | SL=%.8f TP=%.8f | leverage=%dx",
+            symbol,
+            strategy_name,
+            timeframe,
+            side_str,
+            qty,
+            mark_price,
+            sl_price or 0.0,
+            tp_price or 0.0,
+            leverage,
+        )
         return True
 
-
+    # ------------------------------------------------------------------
+    # Update / exit monitoring
+    # ------------------------------------------------------------------
     async def update_all(self):
-        # Expire logic removed
+        """
+        Check all open positions for exit conditions.
+
+        Safe lifecycle:
+        - Detect if exchange filled the position (amt == 0 → TP/SL filled)
+        - Cancel counter-orders by ID when one side triggers
+        - Local checks as safety-net: TP / SL / Trailing / Max bars
+        """
         now = time.time()
-        closed = []
+        closed_keys: List[tuple] = []
 
         for key, pos in self.open_positions.items():
-            symbol, strategy_name = key
+            symbol, _ = key
 
-            # Check logic: use Position.check_exit or just monitor price here?
-            # Original code monitored here. Position class has `check_exit` which was unused in original PositionManager but useful.
-            # Original PositionManager did manual checks.
-            # Let's keep manual checks here but clean them up, or use pos.check_exit?
-            # User didn't specify to switch to pos.check_exit, but Position class in original file had it.
-            # I will stick to original logic structure for safety, just removing expiry.
-            
             try:
                 mark_price = await self.broker.get_mark_price(symbol)
             except Exception as e:
                 log.warning("%s failed to get mark price: %s", symbol, e)
                 continue
 
-            hit_tp = pos.side == SIDE_BUY and mark_price >= pos.tp or pos.side == SIDE_SELL and mark_price <= pos.tp
-            hit_sl = pos.side == SIDE_BUY and mark_price <= pos.sl or pos.side == SIDE_SELL and mark_price >= pos.sl
-            
-            if hit_tp:
-                log.info("%s TP triggered (%.2f)", symbol, mark_price)
-            elif hit_sl:
-                log.info("%s SL triggered (%.2f)", symbol, mark_price)
-            else:
-                continue
+            # --- Detect exchange-side fill (position gone on exchange) ---
+            exit_type: Optional[str] = None
+            try:
+                exchange_amt = await self.broker.position_amt(symbol)
+                if exchange_amt == 0 and not pos.closed:
+                    exit_type = "EXCHANGE_FILL"
+            except Exception:
+                pass
 
-            await self.broker.close_position(symbol)
-            closed.append(key)
-            
-        for key in closed:
+            if exit_type is None:
+                exit_type = self._check_local_exit(pos, mark_price)
+
+            if exit_type:
+                log.info("%s exit triggered: %s @ %.8f", symbol, exit_type, mark_price)
+                try:
+                    if exit_type != "EXCHANGE_FILL":
+                        await self.broker.close_position(symbol)
+                    # Cancel specific counter-orders by ID
+                    await self._cancel_position_orders(pos)
+                except Exception as e:
+                    log.error("%s close failed: %s", symbol, e)
+                    continue
+
+                pos.closed = True
+                pos.exit_ts = now
+                pos.exit = mark_price
+                pos.exit_type = exit_type
+                self.history.append(pos)
+                closed_keys.append(key)
+
+            # Increment bars held counter
+            pos.bars_held += 1
+
+        for key in closed_keys:
             del self.open_positions[key]
 
+    async def _cancel_position_orders(self, pos: Position):
+        """Cancel SL and TP orders by their tracked IDs."""
+        for oid in (pos.sl_order_id, pos.tp_order_id):
+            if oid and hasattr(self.broker, 'cancel_order'):
+                try:
+                    await self.broker.cancel_order(pos.symbol, oid)
+                except Exception:
+                    pass
+        # Fallback: cancel all remaining orders for symbol
+        try:
+            await self.broker.client.futures_cancel_all_open_orders(
+                symbol=pos.symbol
+            )
+        except Exception:
+            pass
 
+    def _check_local_exit(self, pos: Position, mark_price: float) -> Optional[str]:
+        """
+        Check local exit rules.  Returns exit reason or None.
+        """
+        ecfg = self.exit_cfg
+
+        # --- TP ---
+        if pos.tp is not None:
+            if pos.is_long and mark_price >= pos.tp:
+                return "TP"
+            if not pos.is_long and mark_price <= pos.tp:
+                return "TP"
+
+        # --- SL ---
+        if pos.sl is not None:
+            if pos.is_long and mark_price <= pos.sl:
+                return "SL"
+            if not pos.is_long and mark_price >= pos.sl:
+                return "SL"
+
+        # --- Trailing Stop ---
+        if ecfg.trailing_stop_pct is not None:
+            pos.update_peak(mark_price)
+            if pos.peak_pnl > 0:
+                current_pnl = pos.unrealized_pnl(mark_price)
+                notional = pos.entry * pos.qty
+                if notional > 0:
+                    peak_pct = pos.peak_pnl / notional
+                    curr_pct = current_pnl / notional
+                    drawdown = peak_pct - curr_pct
+                    if drawdown >= ecfg.trailing_stop_pct:
+                        return "TRAILING"
+
+        # --- Max Holding Bars ---
+        if ecfg.max_holding_bars is not None:
+            if pos.bars_held >= ecfg.max_holding_bars:
+                return "MAX_BARS"
+
+        return None
+
+    # ------------------------------------------------------------------
+    # Force close all
+    # ------------------------------------------------------------------
     async def force_close_all(self):
-        to_remove = []
+        to_remove: List[tuple] = []
 
         for key, pos in list(self.open_positions.items()):
             symbol, _ = key
             try:
                 await self.broker.close_position(symbol)
+                await self._cancel_position_orders(pos)
             except Exception as e:
                 log.warning("%s force close failed: %s", symbol, e)
-            else:
-                log.info("%s force closed.", symbol)
 
             pos.closed = True
             pos.exit_type = "MANUAL"
@@ -228,4 +478,161 @@ class PositionManager:
         for key in to_remove:
             del self.open_positions[key]
 
-        log.info("All positions force closed.")
+        log.info("All positions force closed (%d).", len(to_remove))
+
+    # ------------------------------------------------------------------
+    # Startup reconciliation
+    # ------------------------------------------------------------------
+    async def reconcile(self, strategy_name: str = "reconciled"):
+        """
+        Query exchange for orphaned positions in *self.symbol*.
+        Adopt them into open_positions so the exit lifecycle can manage them.
+        """
+        if not self.symbol:
+            return
+
+        try:
+            exchange_amt = await self.broker.position_amt(self.symbol)
+        except Exception as e:
+            log.warning("%s reconcile failed: %s", self.symbol, e)
+            return
+
+        if exchange_amt == 0:
+            return
+
+        key = (self.symbol, strategy_name)
+        if key in self.open_positions:
+            return  # already tracked
+
+        side_str = SIDE_BUY if exchange_amt > 0 else SIDE_SELL
+        qty = abs(exchange_amt)
+
+        try:
+            mark_price = await self.broker.get_mark_price(self.symbol)
+        except Exception:
+            mark_price = 0.0
+
+        pos = Position(
+            client=self.broker.client,
+            symbol=self.symbol,
+            side=side_str,
+            qty=qty,
+            entry_price=mark_price,
+            strategy=strategy_name,
+        )
+
+        # Adopt existing exchange orders
+        try:
+            if hasattr(self.broker, 'get_open_orders'):
+                orders = await self.broker.get_open_orders(self.symbol)
+                for o in orders:
+                    otype = o.get("type", "")
+                    oid = int(o.get("orderId", 0))
+                    if "STOP_MARKET" in otype:
+                        pos.sl_order_id = oid
+                        pos.sl = float(o.get("stopPrice", 0))
+                    elif "TAKE_PROFIT" in otype:
+                        pos.tp_order_id = oid
+                        pos.tp = float(o.get("stopPrice", 0))
+        except Exception:
+            pass
+
+        self.open_positions[key] = pos
+        log.info(
+            "%s RECONCILED orphan: %s qty=%.4f @ %.8f (SL_oid=%s TP_oid=%s)",
+            self.symbol, side_str, qty, mark_price,
+            pos.sl_order_id, pos.tp_order_id,
+        )
+
+
+# ======================================================================
+# Live Supervisor — one PositionManager per symbol
+# ======================================================================
+class LiveSupervisor:
+    """
+    Manages a per-symbol PositionManager with per-symbol config overrides.
+
+    Provides a unified interface for the LiveEngine while isolating
+    each symbol's position state, sizing, and exit rules.
+    """
+
+    def __init__(self, broker: IBroker):
+        self.broker = broker
+        self._managers: Dict[str, PositionManager] = {}
+        self.history: List[Position] = []
+
+    def register_symbol(
+        self,
+        symbol: str,
+        sizing_cfg: SizingConfig,
+        exit_cfg: ExitConfig,
+        max_concurrent: int = 1,
+    ):
+        """Register a symbol with its own PositionManager."""
+        if symbol not in self._managers:
+            pm = PositionManager(
+                broker=self.broker,
+                sizing_cfg=sizing_cfg,
+                exit_cfg=exit_cfg,
+                max_concurrent=max_concurrent,
+                symbol=symbol,
+            )
+            self._managers[symbol] = pm
+
+    def get(self, symbol: str) -> PositionManager:
+        return self._managers[symbol]
+
+    @property
+    def open_positions(self) -> Dict[tuple, Position]:
+        """Merged view of all managers' open positions."""
+        merged: Dict[tuple, Position] = {}
+        for pm in self._managers.values():
+            merged.update(pm.open_positions)
+        return merged
+
+    def position_qty(self, symbol: str) -> float:
+        pm = self._managers.get(symbol)
+        if pm is None:
+            return 0.0
+        return pm.position_qty(symbol)
+
+    async def open_position(
+        self,
+        symbol: str,
+        side: int,
+        strategy_name: str,
+        leverage: int,
+        timeframe: str,
+        levels=None,
+    ) -> bool:
+        pm = self._managers.get(symbol)
+        if pm is None:
+            log.warning("No manager registered for %s", symbol)
+            return False
+        return await pm.open_position(
+            symbol=symbol,
+            side=side,
+            strategy_name=strategy_name,
+            leverage=leverage,
+            timeframe=timeframe,
+            levels=levels,
+        )
+
+    async def update_all(self):
+        for pm in self._managers.values():
+            await pm.update_all()
+            self.history.extend(pm.history)
+            pm.history.clear()
+
+    async def force_close_all(self):
+        for pm in self._managers.values():
+            await pm.force_close_all()
+            self.history.extend(pm.history)
+            pm.history.clear()
+        log.info("Supervisor: all symbols force-closed.")
+
+    async def reconcile_all(self, strategy_name: str = "reconciled"):
+        """Reconcile orphaned exchange positions for all registered symbols."""
+        for sym, pm in self._managers.items():
+            await pm.reconcile(strategy_name)
+        log.info("Supervisor: reconciliation complete for %d symbols.", len(self._managers))

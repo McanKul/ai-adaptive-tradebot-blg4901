@@ -1,6 +1,20 @@
+"""
+live_runner.py
+==============
+Entry-point for live trading.
+
+Usage:
+    python live_runner.py                              # uses example_live_config.yaml
+    python live_runner.py --config my_config.yaml      # custom config
+"""
 import asyncio
+import argparse
 import os
+import sys
+
 from binance.client import AsyncClient
+
+from live.live_config import LiveConfig
 from live.live_engine import LiveEngine
 from live.broker_binance import BinanceBroker
 from live.binance_client import BinanceClient
@@ -35,9 +49,10 @@ async def main():
     api_secret = os.getenv("BINANCE_API_SECRET", "")
 
     if not api_key:
-        print("WARNING: BINANCE_API_KEY not found in env. Client might fail or be read-only.")
+        print("WARNING: BINANCE_API_KEY not set. Client may fail or be read-only.")
 
-    raw_client = await AsyncClient.create(api_key, api_secret)
+    testnet = cfg.testnet
+    raw_client = await AsyncClient.create(api_key, api_secret, testnet=testnet)
     client = BinanceClient(raw_client)
     broker = BinanceBroker(client)
 
@@ -69,11 +84,26 @@ async def main():
     try:
         await engine.run()
     except KeyboardInterrupt:
-        print("Stopping...")
+        print("\nStopping (KeyboardInterrupt)...")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         await client.close_connection()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="Live trading runner")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="example_live_config.yaml",
+        help="Path to YAML config file",
+    )
+    args = parser.parse_args()
+
+    if not os.path.exists(args.config):
+        print(f"Config file not found: {args.config}")
+        sys.exit(1)
+
+    asyncio.run(main(args.config))
