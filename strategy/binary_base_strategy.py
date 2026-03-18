@@ -19,25 +19,24 @@ from typing import Optional, Dict, Any
 import numpy as np
 import pandas as pd
 from Interfaces.IStrategy import IStrategy, StrategyDecision
-# import time
 
 
 class BinaryBaseStrategy(IStrategy):
     """
     Base class for binary (+1/-1) signal strategies.
-    
+
     Provides data access from either:
     - BarStore (live trading with streaming data)
     - DataFrame buffer (backtest with preloaded data)
-    
+
     Subclasses implement _live_signal() which receives OHLCV arrays
     and returns a signal string.
     """
-    
+
     def __init__(
         self,
-        bar_store=None, 
-        bars: pd.DataFrame = None,
+        bar_store=None,
+        bars: Optional[pd.DataFrame] = None,
         **params,
     ):
         self.bar_store = bar_store

@@ -1,5 +1,5 @@
 from Interfaces.IClient import IClient
-from binance.client import AsyncClient
+from binance import AsyncClient
 from typing import Dict, Any, List
 
 class BinanceClient(IClient):

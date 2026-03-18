@@ -23,7 +23,6 @@ from binance.enums import (
 )
 from utils.logger import setup_logger
 from Interfaces.IBroker import IBroker
-from Interfaces.IClient import IClient
 from live.live_config import SizingConfig, ExitConfig
 
 log = setup_logger("PositionManager")
@@ -37,7 +36,6 @@ class Position:
 
     def __init__(
         self,
-        client: IClient,
         symbol: str,
         side: str,
         qty: float,
@@ -50,8 +48,9 @@ class Position:
         timeframe: str = "1h",
         bar_index: int = 0,
         levels: Optional[Any] = None,
+        # Kept for backward compat — ignored
+        client: Optional[Any] = None,
     ):
-        self.client = client
         self.symbol = symbol
         self.side = side
         self.qty = qty
@@ -309,7 +308,6 @@ class PositionManager:
 
         # 6) Track position
         pos = Position(
-            client=self.broker.client,
             symbol=symbol,
             side=side_str,
             qty=qty,
@@ -343,14 +341,18 @@ class PositionManager:
     # ------------------------------------------------------------------
     # Update / exit monitoring
     # ------------------------------------------------------------------
+    # How often to check exchange position_amt (seconds).
+    # Between checks, rely on local exit logic only.
+    _EXCHANGE_CHECK_INTERVAL = 10.0
+
     async def update_all(self):
         """
         Check all open positions for exit conditions.
 
         Safe lifecycle:
-        - Detect if exchange filled the position (amt == 0 → TP/SL filled)
+        - Periodically detect exchange-side fills (position_amt == 0)
         - Cancel counter-orders by ID when one side triggers
-        - Local checks as safety-net: TP / SL / Trailing / Max bars
+        - Local checks every bar: TP / SL / Trailing / Max bars
         """
         now = time.time()
         closed_keys: List[tuple] = []
@@ -364,15 +366,19 @@ class PositionManager:
                 log.warning("%s failed to get mark price: %s", symbol, e)
                 continue
 
-            # --- Detect exchange-side fill (position gone on exchange) ---
+            # --- Detect exchange-side fill (throttled) ---
             exit_type: Optional[str] = None
-            try:
-                exchange_amt = await self.broker.position_amt(symbol)
-                if exchange_amt == 0 and not pos.closed:
-                    exit_type = "EXCHANGE_FILL"
-            except Exception:
-                pass
+            last_check = getattr(pos, '_last_exchange_check', 0.0)
+            if now - last_check >= self._EXCHANGE_CHECK_INTERVAL:
+                try:
+                    exchange_amt = await self.broker.position_amt(symbol)
+                    if exchange_amt == 0 and not pos.closed:
+                        exit_type = "EXCHANGE_FILL"
+                except Exception:
+                    pass
+                pos._last_exchange_check = now
 
+            # --- Local exit checks (every bar, no API call) ---
             if exit_type is None:
                 exit_type = self._check_local_exit(pos, mark_price)
 
@@ -401,20 +407,17 @@ class PositionManager:
             del self.open_positions[key]
 
     async def _cancel_position_orders(self, pos: Position):
-        """Cancel SL and TP orders by their tracked IDs."""
+        """Cancel SL and TP orders by their tracked IDs only."""
+        cancelled = 0
         for oid in (pos.sl_order_id, pos.tp_order_id):
             if oid and hasattr(self.broker, 'cancel_order'):
                 try:
                     await self.broker.cancel_order(pos.symbol, oid)
-                except Exception:
-                    pass
-        # Fallback: cancel all remaining orders for symbol
-        try:
-            await self.broker.client.futures_cancel_all_open_orders(
-                symbol=pos.symbol
-            )
-        except Exception:
-            pass
+                    cancelled += 1
+                except Exception as e:
+                    log.debug("%s cancel order %s: %s", pos.symbol, oid, e)
+        if cancelled:
+            log.info("%s cancelled %d tracked orders", pos.symbol, cancelled)
 
     def _check_local_exit(self, pos: Position, mark_price: float) -> Optional[str]:
         """
@@ -513,7 +516,6 @@ class PositionManager:
             mark_price = 0.0
 
         pos = Position(
-            client=self.broker.client,
             symbol=self.symbol,
             side=side_str,
             qty=qty,

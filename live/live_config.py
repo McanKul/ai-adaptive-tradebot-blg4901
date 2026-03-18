@@ -149,6 +149,21 @@ class GlobalRiskConfig:
 
 
 # ---------------------------------------------------------------------------
+# News sentiment settings
+# ---------------------------------------------------------------------------
+@dataclass
+class NewsConfig:
+    """News sentiment analysis configuration."""
+    enabled: bool = False
+    sentiment_provider: str = "gemini"      # "gemini" | "openai"
+    api_key: Optional[str] = None           # Override env var (GOOGLE_API_KEY / OPENAI_API_KEY)
+    refresh_interval: int = 300             # Seconds between sentiment refreshes
+    news_limit: int = 5                     # Max articles per symbol per fetch
+    buy_threshold: float = 0.6             # Sentiment > this + BUY signal → LONG
+    sell_threshold: float = 0.4            # Sentiment < this + SELL signal → SHORT
+
+
+# ---------------------------------------------------------------------------
 # Rate-limit settings
 # ---------------------------------------------------------------------------
 @dataclass
@@ -183,6 +198,9 @@ class LiveConfig:
     risk: RiskConfig = field(default_factory=RiskConfig)
     levels: LevelsConfig = field(default_factory=LevelsConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
+
+    # News sentiment
+    news: NewsConfig = field(default_factory=NewsConfig)
 
     # Multi-coin & global risk
     symbol_routes: Dict[str, SymbolRoute] = field(default_factory=dict)
@@ -245,6 +263,7 @@ class LiveConfig:
         risk_d = d.get("risk", {})
         levels_d = d.get("levels", {})
         exec_d = d.get("execution", {})
+        news_d = d.get("news", {})
         api_d = d.get("api", {})
         gr_d = d.get("global_risk", {})
         rl_d = d.get("rate_limit", {})
@@ -272,6 +291,7 @@ class LiveConfig:
             risk=_pick(RiskConfig, risk_d),
             levels=_pick(LevelsConfig, levels_d),
             execution=_pick(ExecutionConfig, exec_d),
+            news=_pick(NewsConfig, news_d),
             symbol_routes=routes,
             global_risk=_pick(GlobalRiskConfig, gr_d),
             rate_limit=_pick(RateLimitConfig, rl_d),

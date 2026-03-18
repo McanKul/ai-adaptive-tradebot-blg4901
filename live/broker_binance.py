@@ -1,5 +1,12 @@
+import time
+
 from binance.exceptions import BinanceAPIException
-from binance.enums import *
+from binance.enums import (
+    SIDE_BUY, SIDE_SELL,
+    FUTURE_ORDER_TYPE_MARKET,
+    FUTURE_ORDER_TYPE_STOP_MARKET,
+    FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET,
+)
 from utils.logger import setup_logger
 from Interfaces.IBroker import IBroker
 from Interfaces.IClient import IClient
@@ -8,6 +15,8 @@ import math
 
 class BinanceBroker(IBroker):
     """Binance API wrapper implementing IBroker with rate-limiting."""
+
+    _MARK_PRICE_TTL = 2.0  # seconds — cache mark price briefly to reduce API calls
 
     def __init__(self, client: IClient, rate_limiter: AsyncRateLimiter | None = None,
                  exchange_info_ttl: int = 300):
@@ -18,15 +27,24 @@ class BinanceBroker(IBroker):
         # idempotent state caches
         self._margin_set: set[str] = set()      # symbols already set to ISOLATED
         self._leverage_set: dict[str, int] = {}  # symbol -> last leverage sent
+        # mark price short-lived cache: symbol -> (price, timestamp)
+        self._mark_cache: dict[str, tuple[float, float]] = {}
 
     @property
     def client(self) -> IClient:
         return self._client
 
     async def get_mark_price(self, symbol: str) -> float:
+        """Return mark price with short-lived cache to reduce API calls."""
+        now = time.monotonic()
+        cached = self._mark_cache.get(symbol)
+        if cached and (now - cached[1]) < self._MARK_PRICE_TTL:
+            return cached[0]
         await self._rl.acquire()
         data = await self._client.futures_mark_price(symbol=symbol)
-        return float(data["markPrice"])
+        price = float(data["markPrice"])
+        self._mark_cache[symbol] = (price, now)
+        return price
 
     # ——————————————————— IBroker API ————————————————————
     async def market_order(self, symbol: str, side: str, qty: float):

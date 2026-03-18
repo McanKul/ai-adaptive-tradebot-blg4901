@@ -1,7 +1,11 @@
 """
 live/live_engine.py
 ===================
-Live trading engine that coordinates strategy signals with optional news sentiment.
+Live trading engine that coordinates:
+- Strategy signals (via IStrategy)
+- News sentiment analysis (via NewsEngine + SignalCombiner)
+- Position management (via LiveSupervisor — per-symbol PositionManager)
+- Account-level risk (via LiveGlobalRisk)
 
 Signal combination logic:
 - Both strategy + sentiment agree BUY  → LONG
@@ -11,15 +15,20 @@ Signal combination logic:
 """
 from __future__ import annotations
 
-import asyncio
-from typing import Optional
+import time
+from typing import Optional, Type
 
 from utils.bar_store import BarStore
 from Interfaces.IBroker import IBroker
 from Interfaces.INewsSource import INewsSource
 from Interfaces.ISentimentAnalyzer import ISentimentAnalyzer
 from Interfaces.ISignalCombiner import ISignalCombiner
-from live.position_manager import PositionManager
+from Interfaces.market_data import Bar
+from Interfaces.orders import OrderSide
+from Interfaces.strategy_adapter import StrategyContext
+from live.live_config import LiveConfig
+from live.position_manager import LiveSupervisor
+from live.global_risk import LiveGlobalRisk
 from live.streamer import Streamer
 from utils.logger import setup_logger
 
@@ -31,90 +40,81 @@ except ImportError:
 log = setup_logger("LiveEngine")
 
 
-def load_strategy_instance(strategy_cls, config, bar_store):
-    """Load strategy instance with configuration."""
-    return strategy_cls(bar_store=bar_store, **config.get("params", {}))
-
-
 class LiveEngine:
     """
-    Live trading engine that coordinates strategy signals with optional news sentiment.
+    Config-driven live trading engine.
 
-    When news components are provided, signals are combined:
-    - Both BUY (strategy + sentiment) → LONG
-    - Both SELL (strategy + sentiment) → SHORT
-    - Mixed signals → NO ACTION
-
-    When news components are NOT provided, raw strategy signals drive positions.
+    Uses LiveConfig for all settings, LiveSupervisor for per-symbol
+    position management, and optional NewsEngine for sentiment signals.
     """
 
     def __init__(
         self,
-        config,
+        cfg: LiveConfig,
         broker: IBroker,
-        strategy_cls,
+        strategy_cls: Type,
+        global_risk: LiveGlobalRisk,
         news_source: Optional[INewsSource] = None,
         sentiment_analyzer: Optional[ISentimentAnalyzer] = None,
         signal_combiner: Optional[ISignalCombiner] = None,
-        news_refresh_interval: int = 300,
     ):
-        """
-        Initialize the live engine.
-
-        Args:
-            config: Strategy configuration dict or list
-            broker: Broker implementation for trading
-            strategy_cls: Strategy class to instantiate
-            news_source: Optional news source for sentiment analysis
-            sentiment_analyzer: Optional sentiment analyzer (requires news_source)
-            signal_combiner: Optional signal combiner (requires news_source + analyzer)
-            news_refresh_interval: Seconds between news sentiment refreshes
-        """
-        self.cfg = config
+        self.cfg = cfg
         self.broker = broker
+        self.global_risk = global_risk
         self.bar_store = BarStore()
 
-        # ── Configure Strategies ──────────────────────────────────────────
-        self.strategies = []
-        strategy_configs = [self.cfg] if isinstance(self.cfg, dict) else self.cfg
-
-        for scfg in strategy_configs:
-            instance = load_strategy_instance(strategy_cls, scfg, self.bar_store)
-            self.strategies.append({**scfg, "instance": instance})
-
-        self.pos_mgr = PositionManager(
-            self.broker,
-            base_capital=config.get("base_capital", 10.0) if isinstance(config, dict) else 10.0,
-            max_concurrent=config.get("max_concurrent", 1) if isinstance(config, dict) else 1,
+        # ── Strategy Instance ──────────────────────────────────────────
+        self.strategy = strategy_cls(
+            bar_store=self.bar_store,
+            **cfg.strategy_params,
         )
 
-        # ── Timeframes & Streamer ─────────────────────────────────────────
-        self.timeframes = list(set(s.get("timeframe", "1m") for s in self.strategies))
-        self.streamer = None
-        self.symbols = []
+        # ── LiveSupervisor (per-symbol PositionManager) ────────────────
+        self.supervisor = LiveSupervisor(broker)
 
-        # ── News Sentiment Integration ────────────────────────────────────
+        # ── Streamer ───────────────────────────────────────────────────
+        self.timeframes = [cfg.timeframe]
+        self.streamer: Optional[Streamer] = None
+        self.symbols: list[str] = []
+
+        # ── Equity Cache (avoid API call every bar) ────────────────────
+        self._last_equity: float = 10_000.0
+        self._equity_ts: float = 0.0
+        self._EQUITY_REFRESH_SEC: float = 30.0
+
+        # ── News Sentiment ─────────────────────────────────────────────
         self.news_engine = None
         self.signal_combiner = signal_combiner
 
-        if news_source and sentiment_analyzer:
-            if NewsEngine:
-                self.news_engine = NewsEngine(
-                    news_source=news_source,
-                    sentiment_analyzer=sentiment_analyzer,
-                    refresh_interval=news_refresh_interval,
-                )
-                log.info("News sentiment integration enabled (refresh=%ds)", news_refresh_interval)
-            else:
-                log.warning("NewsEngine module not available — running without sentiment")
+        if news_source and sentiment_analyzer and NewsEngine:
+            self.news_engine = NewsEngine(
+                news_source=news_source,
+                sentiment_analyzer=sentiment_analyzer,
+                refresh_interval=cfg.news.refresh_interval,
+                news_limit=cfg.news.news_limit,
+            )
+            log.info("News sentiment enabled (refresh=%ds)", cfg.news.refresh_interval)
 
         if self.news_engine and not self.signal_combiner:
             log.warning(
-                "News engine enabled but no signal combiner provided — "
-                "sentiment will be logged but NOT used for trading decisions"
+                "News engine enabled but no signal combiner — "
+                "sentiment will be logged but NOT used for trading"
             )
 
-    # ── Signal Combination ────────────────────────────────────────────────
+    # ── Equity Cache ───────────────────────────────────────────────────
+
+    async def _refresh_equity(self) -> float:
+        """Return cached equity; only hits the API if stale (>30s)."""
+        now = time.monotonic()
+        if now - self._equity_ts >= self._EQUITY_REFRESH_SEC:
+            try:
+                self._last_equity = await self.broker.balance("USDT")
+                self._equity_ts = now
+            except Exception as e:
+                log.warning("Balance refresh failed, using cached: %s", e)
+        return self._last_equity
+
+    # ── Signal Combination ────────────────────────────────────────────
 
     async def _get_combined_signal(
         self, symbol: str, strategy_signal: Optional[str]
@@ -125,11 +125,7 @@ class LiveEngine:
         Returns:
             +1 for long, -1 for short, None for no action.
         """
-        # Convert string signal to int for combiner
-        if strategy_signal is not None:
-            strat_int = int(strategy_signal)
-        else:
-            strat_int = None
+        strat_int = int(strategy_signal) if strategy_signal is not None else None
 
         # No news engine → pass through raw strategy signal
         if not self.news_engine:
@@ -138,7 +134,7 @@ class LiveEngine:
         # Fetch sentiment score (cached or fresh)
         sentiment_score = await self.news_engine.get_sentiment(symbol)
         log.info(
-            "Symbol %s: strategy_signal=%s, sentiment=%.2f",
+            "[%s] strategy_signal=%s, sentiment=%.2f",
             symbol, strategy_signal, sentiment_score,
         )
 
@@ -150,34 +146,41 @@ class LiveEngine:
         combined = self.signal_combiner.combine(strat_int, sentiment_score)
 
         if combined != strat_int:
-            log.info("Signal modified by sentiment: %s → %s", strat_int, combined)
+            log.info("[%s] Signal modified by sentiment: %s → %s", symbol, strat_int, combined)
 
         return combined
 
-    # ── Main Trading Loop ─────────────────────────────────────────────────
+    # ── Main Trading Loop ─────────────────────────────────────────────
 
     async def run(self):
         """Main event loop for live trading."""
 
-        # 1) Resolve Symbols
-        all_coins = []
-        for s in self.strategies:
-            all_coins.extend(s.get("coins", []))
-
+        # 1) Resolve symbols
         self.symbols = await Streamer.resolve_symbols(
-            self.broker.client, list(set(all_coins))
+            self.broker.client, self.cfg.symbols,
         )
+        log.info("Resolved %d symbols: %s", len(self.symbols), self.symbols)
 
-        # 2) Register per-symbol managers in supervisor
+        # 2) Register per-symbol managers in supervisor (config-driven)
         for sym in self.symbols:
             self.supervisor.register_symbol(
                 symbol=sym,
                 sizing_cfg=self.cfg.sizing_for(sym),
                 exit_cfg=self.cfg.exit_for(sym),
-                max_concurrent=1,  # 1 position per symbol
+                max_concurrent=self.cfg.risk.max_concurrent_positions,
             )
 
-        # 3) Create streamer
+        # 3) Set margin type & leverage per symbol
+        for sym in self.symbols:
+            try:
+                margin_type = self.cfg.margin_type_for(sym)
+                if margin_type == "ISOLATED":
+                    await self.broker.ensure_isolated_margin(sym)
+                await self.broker.set_leverage(sym, self.cfg.leverage_for(sym))
+            except Exception as e:
+                log.error("[%s] margin/leverage setup failed: %s", sym, e)
+
+        # 4) Create streamer
         self.streamer = Streamer(
             self.broker.client,
             self.symbols,
@@ -185,23 +188,42 @@ class LiveEngine:
             bar_store=self.bar_store,
         )
 
-        # 4) Preload history
+        # 5) Start WebSocket FIRST in buffer mode (no data gap)
+        await self.streamer.start_buffering()
+
+        # 6) Preload historical bars (skips current open bar)
         await self.streamer.preload_history(
-            self.symbols, self.timeframes,
-            limit=100, batch=10,
+            self.symbols,
+            self.timeframes,
+            limit=self.cfg.execution.preload_bars,
+            batch=self.cfg.execution.preload_batch,
         )
 
-        # 4) Prefetch news sentiment (if enabled)
+        # 7) Initialize global risk with current equity
+        try:
+            self._last_equity = await self.broker.balance("USDT")
+            self._equity_ts = time.monotonic()
+            self.global_risk.set_start_equity(self._last_equity)
+            log.info("Starting equity: %.2f USDT", self._last_equity)
+        except Exception as e:
+            log.warning("Could not fetch starting equity: %s", e)
+
+        # 8) Reconcile orphaned exchange positions
+        await self.supervisor.reconcile_all(strategy_name=self.cfg.name)
+
+        # 9) Prefetch news sentiment (if enabled)
         if self.news_engine:
             await self.news_engine.prefetch_symbols(self.symbols)
 
-        # 5) Start Live Stream
-        await self.streamer.start()
+        # 10) Flush buffered WS bars → bar_store + queue (dedup handles overlaps)
+        self.streamer.flush_buffer()
+
         log.info(
-            "Live Engine Started: %d symbols | tf=%s | sentiment=%s",
+            "LiveEngine started: %d symbols | tf=%s | sentiment=%s | risk=%s",
             len(self.symbols),
             self.timeframes,
-            "enabled" if self.news_engine else "disabled",
+            "ON" if self.news_engine else "OFF",
+            "ON",
         )
 
         try:
@@ -210,38 +232,110 @@ class LiveEngine:
                 sym = bar_data["s"]
                 tf = bar_data["k"]["i"]
 
-                for s in self.strategies:
-                    # Check if this strategy cares about this symbol + timeframe
-                    if sym not in s.get("coins", []) or tf != s.get("timeframe", "1m"):
+                # Only process our configured timeframe
+                if tf != self.cfg.timeframe:
+                    continue
+
+                # Only process registered symbols
+                if sym not in self.symbols:
+                    continue
+
+                # ── Global Risk Check ──────────────────────────────────
+                equity = await self._refresh_equity()
+                try:
+                    open_count = len(self.supervisor.open_positions)
+                    total_exposure = sum(
+                        pos.entry * pos.qty
+                        for pos in self.supervisor.open_positions.values()
+                    )
+                    risk_ok, risk_reason = self.global_risk.check_account_risk(
+                        current_equity=equity,
+                        total_exposure_usd=total_exposure,
+                        open_position_count=open_count,
+                    )
+                    if not risk_ok:
+                        log.warning("Global risk block: %s — skipping signals", risk_reason)
+                        await self.supervisor.update_all()
                         continue
+                except Exception as e:
+                    log.warning("Global risk check error: %s", e)
 
-                    inst = s["instance"]
-                    strategy_sig = inst.generate_signal(sym)
+                # ── Build Bar + Context for on_bar strategies ─────────
+                bar_dict = bar_data["k"]
+                bar = Bar(
+                    symbol=sym,
+                    timeframe=tf,
+                    timestamp_ns=int(bar_dict.get("t", 0)) * 1_000_000,
+                    open=float(bar_dict.get("o", 0)),
+                    high=float(bar_dict.get("h", 0)),
+                    low=float(bar_dict.get("l", 0)),
+                    close=float(bar_dict.get("c", 0)),
+                    volume=float(bar_dict.get("v", 0)),
+                )
 
-                    # Combine with news sentiment (pass-through if no news engine)
-                    final_sig = await self._get_combined_signal(sym, strategy_sig)
+                # Current position for this symbol
+                current_pos = self.supervisor.position_qty(sym)
 
-                    if final_sig:
-                        direction = 1 if final_sig == 1 else -1
-                        exec_params = s.get("execution", {})
+                ctx = StrategyContext(
+                    symbol=sym,
+                    timeframe=tf,
+                    bar_store=self.bar_store,
+                    position=current_pos,
+                    equity=equity,
+                    cash=equity,
+                    timestamp_ns=bar.timestamp_ns,
+                )
 
-                        log.info(
-                            "Opening position: %s direction=%d (strategy=%s, combined=%s)",
-                            sym, direction, strategy_sig, final_sig,
-                        )
+                # ── Generate Signal (supports both modes) ─────────────
+                decision = self.strategy.on_bar(bar, ctx)
 
-                        await self.pos_mgr.open_position(
-                            sym,
-                            direction,
-                            s.get("name", "UnknownStrategy"),
-                            leverage=exec_params.get("leverage", 1),
-                            sl_pct=exec_params.get("sl_pct", 1.0),
-                            tp_pct=exec_params.get("tp_pct", 1.0),
-                            expire_sec=exec_params.get("expire_sec", 3600),
-                            timeframes=tf,
-                        )
-                    else:
-                        await self.pos_mgr.update_all()
+                # Extract signal: from orders or from legacy signal field
+                strategy_sig = None
+                if decision.has_orders:
+                    first_order = decision.orders[0]
+                    if not getattr(first_order, 'reduce_only', False):
+                        strategy_sig = "+1" if first_order.side == OrderSide.BUY else "-1"
+                elif decision.has_signal:
+                    strategy_sig = decision.signal
+
+                # ── Combine with Sentiment ─────────────────────────────
+                final_sig = await self._get_combined_signal(sym, strategy_sig)
+
+                if final_sig:
+                    leverage = self.cfg.leverage_for(sym)
+
+                    log.info(
+                        "[%s] Opening position: direction=%+d (strategy=%s, final=%s)",
+                        sym, final_sig, strategy_sig, final_sig,
+                    )
+
+                    await self.supervisor.open_position(
+                        symbol=sym,
+                        side=final_sig,
+                        strategy_name=self.cfg.name,
+                        leverage=leverage,
+                        timeframe=tf,
+                    )
+
+                # ── Update existing positions (exit checks) ────────────
+                await self.supervisor.update_all()
+
         finally:
             await self.streamer.stop()
-            log.info("Live Engine stopped")
+            log.info("LiveEngine stopped")
+
+    # ── Shutdown ──────────────────────────────────────────────────────
+
+    async def shutdown(self):
+        """Graceful shutdown: close all positions and stop streamer."""
+        log.info("Shutting down...")
+        try:
+            await self.supervisor.force_close_all()
+        except Exception as e:
+            log.error("Error during force close: %s", e)
+
+        if self.streamer:
+            try:
+                await self.streamer.stop()
+            except Exception:
+                pass

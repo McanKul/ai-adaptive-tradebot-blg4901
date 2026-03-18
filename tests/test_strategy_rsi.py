@@ -20,20 +20,20 @@ def make_df(closes):
 
 
 def test_rsi_strategy_overbought_sells():
-    # Monotonically increasing closes -> RSI high -> expect -1
+    # Monotonically increasing closes -> RSI high -> expect "-1"
     closes = list(range(1, 60))
     df = make_df(closes)
     strat = RSIStrategy(bars=df, rsi_period=14, rsi_overbought=70, rsi_oversold=30)
     sig = strat.generate_signal()
-    assert sig in (-1, +1, None)
-    assert sig == -1
+    assert sig in ("-1", "+1", None)
+    assert sig == "-1"
 
 
 def test_rsi_strategy_oversold_buys():
-    # Monotonically decreasing closes -> RSI low -> expect +1
+    # Monotonically decreasing closes -> RSI low -> expect "+1"
     closes = list(range(100, 40, -1))
     df = make_df(closes)
     strat = RSIStrategy(bars=df, rsi_period=14, rsi_overbought=70, rsi_oversold=30)
     sig = strat.generate_signal()
-    assert sig in (-1, +1, None)
-    assert sig == +1
+    assert sig in ("-1", "+1", None)
+    assert sig == "+1"

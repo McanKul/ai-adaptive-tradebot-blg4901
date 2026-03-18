@@ -339,7 +339,7 @@ def _signal_to_orders(
     Returns:
         List with one order, or empty list
     """
-    if signal not in ("+1", "-1", "1", "-1"):
+    if signal not in ("+1", "-1", "1"):
         return []
     
     side = OrderSide.BUY if signal in ("+1", "1") else OrderSide.SELL
