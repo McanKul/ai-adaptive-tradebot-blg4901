@@ -18,7 +18,7 @@ from live.live_config import LiveConfig
 from live.live_engine import LiveEngine
 from live.broker_binance import BinanceBroker
 from live.binance_client import BinanceClient
-from strategy.RSIThreshold import Strategy  # Example strategy import
+from Strategy.RSIThreshold import Strategy  # Example strategy import
 
 # Optional: News sentiment components
 from news.ddg_news_source import DDGNewsSource
