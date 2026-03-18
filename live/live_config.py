@@ -16,6 +16,7 @@ Usage:
 """
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List
 import logging
@@ -216,7 +217,6 @@ class LiveConfig:
         route = self.symbol_routes.get(symbol)
         if route is None:
             return self.sizing
-        import copy
         s = copy.copy(self.sizing)
         if route.leverage is not None:
             s.leverage = route.leverage
@@ -229,7 +229,6 @@ class LiveConfig:
         route = self.symbol_routes.get(symbol)
         if route is None:
             return self.exit
-        import copy
         e = copy.copy(self.exit)
         if route.take_profit_pct is not None:
             e.take_profit_pct = route.take_profit_pct

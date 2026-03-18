@@ -50,7 +50,7 @@ def _make_pm(max_concurrent=2, leverage=10, margin_usd=10.0,
 async def _open_pos(pm: PositionManager, leverage: int = 10):
     broker = pm.broker
     filters = make_filters()
-    broker.client.futures_mark_price.return_value = {"markPrice": "100.0"}
+    broker.get_mark_price = AsyncMock(return_value=100.0)
     broker.client.futures_exchange_info.return_value = filters
     broker.exchange_info = AsyncMock(return_value=filters)
     broker.ensure_isolated_margin = AsyncMock()

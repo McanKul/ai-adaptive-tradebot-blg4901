@@ -117,36 +117,41 @@ def create_news_components(cfg: LiveConfig):
 
 
 # ── Main ──────────────────────────────────────────────────────────────
-async def main(config_path: str):
+async def main(config_path: str, dry_run: bool = False):
     # 1) Load config
     if config_path.endswith(".json"):
         cfg = LiveConfig.from_json(config_path)
     else:
         cfg = LiveConfig.from_yaml(config_path)
 
-    log.info("Config loaded: %s | symbols=%s | strategy=%s", cfg.name, cfg.symbols, cfg.strategy_class)
+    mode = "DRY-RUN" if dry_run else "LIVE"
+    log.info("[%s] Config loaded: %s | symbols=%s | strategy=%s",
+             mode, cfg.name, cfg.symbols, cfg.strategy_class)
 
     # 2) Resolve strategy class
     strategy_cls = resolve_strategy_class(cfg.strategy_class)
     log.info("Strategy class resolved: %s", strategy_cls.__name__)
 
-    # 3) Create Binance client + broker
-    api_key = os.getenv("BINANCE_API_KEY", "")
-    api_secret = os.getenv("BINANCE_API_SECRET", "")
-
-    if not api_key:
-        log.warning("BINANCE_API_KEY not set — client may fail or be read-only")
-
-    raw_client = await AsyncClient.create(api_key, api_secret, testnet=cfg.testnet)
-    client = BinanceClient(raw_client)
-    rate_limiter = AsyncRateLimiter(
-        max_per_minute=cfg.rate_limit.requests_per_minute,
-    )
-    broker = BinanceBroker(
-        client,
-        rate_limiter=rate_limiter,
-        exchange_info_ttl=cfg.rate_limit.exchange_info_ttl_sec,
-    )
+    # 3) Create broker (real or paper)
+    client = None
+    if dry_run:
+        from live.dry_broker import DryBroker
+        broker = DryBroker(initial_balance=10_000.0)
+    else:
+        api_key = os.getenv("BINANCE_API_KEY", "")
+        api_secret = os.getenv("BINANCE_API_SECRET", "")
+        if not api_key:
+            log.warning("BINANCE_API_KEY not set — client may fail or be read-only")
+        raw_client = await AsyncClient.create(api_key, api_secret, testnet=cfg.testnet)
+        client = BinanceClient(raw_client)
+        rate_limiter = AsyncRateLimiter(
+            max_per_minute=cfg.rate_limit.requests_per_minute,
+        )
+        broker = BinanceBroker(
+            client,
+            rate_limiter=rate_limiter,
+            exchange_info_ttl=cfg.rate_limit.exchange_info_ttl_sec,
+        )
 
     # 4) Global risk manager
     global_risk = LiveGlobalRisk(cfg.global_risk)
@@ -205,7 +210,8 @@ async def main(config_path: str):
         traceback.print_exc()
     finally:
         await engine.shutdown()
-        await client.close_connection()
+        if client:
+            await client.close_connection()
 
 
 if __name__ == "__main__":
@@ -216,10 +222,15 @@ if __name__ == "__main__":
         default="example_live_config.yaml",
         help="Path to YAML/JSON config file",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Paper trading mode — no real orders sent",
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.config):
         print(f"Config file not found: {args.config}")
         sys.exit(1)
 
-    asyncio.run(main(args.config))
+    asyncio.run(main(args.config, dry_run=args.dry_run))

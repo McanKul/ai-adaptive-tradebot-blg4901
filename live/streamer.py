@@ -11,16 +11,25 @@ log = setup_logger("Streamer")
 
 class Streamer(IStreamer):
     """
-    Kline WebSocket streamer with gap-free preload→live transition.
+    Kline WebSocket streamer with:
+    - Gap-free preload→live transition (buffer mode)
+    - Auto-reconnect with exponential backoff
+    - Heartbeat timeout detection (silent disconnect protection)
+    - Gap recovery via REST after reconnect
 
     Flow (driven by LiveEngine):
         1. start_buffering()   → WS connects, closed bars buffered in memory
         2. preload_history()   → REST klines fetched (skips current open bar)
         3. flush_buffer()      → buffered WS bars deduped into bar_store & queue
         4. main loop consumes  queue.get()
-
-    This eliminates the gap between preload and WebSocket start.
     """
+
+    # ── Reconnect settings ───────────────────────────────────────────
+    _INITIAL_BACKOFF = 1.0       # first retry after 1s
+    _MAX_BACKOFF = 60.0          # cap at 60s
+    _BACKOFF_FACTOR = 2.0        # double each retry
+    _MAX_RECONNECTS = 0          # 0 = unlimited
+    _HEARTBEAT_TIMEOUT = 90.0    # no message for 90s → force reconnect
 
     def __init__(self, client: IClient, symbols, intervals, bar_store: BarStore):
         self.client: IClient = client
@@ -32,10 +41,15 @@ class Streamer(IStreamer):
         self.queue = asyncio.Queue()
         self.bsm = BinanceSocketManager(self.raw_client)
         self.task = None
+        self._stopped = False
 
         # Buffer mode: WS events collected here until flush_buffer()
         self._buffering = False
         self._buffer: list[dict] = []
+
+        # Reconnect stats
+        self._reconnect_count = 0
+        self._last_msg_time: float = 0.0
 
     # ── Preload historical bars ──────────────────────────────────────
 
@@ -82,7 +96,7 @@ class Streamer(IStreamer):
 
             await asyncio.sleep(1)
 
-    # ── Kline WebSocket stream ───────────────────────────────────────
+    # ── Kline WebSocket stream with auto-reconnect ───────────────────
 
     async def start_buffering(self):
         """
@@ -91,7 +105,8 @@ class Streamer(IStreamer):
         """
         self._buffering = True
         self._buffer.clear()
-        self.task = asyncio.create_task(self._stream_klines())
+        self._stopped = False
+        self.task = asyncio.create_task(self._run_with_reconnect())
         log.info(
             "Kline stream started (buffer mode) — %d symbols | tf=%s",
             len(self.symbols), self.intervals,
@@ -116,10 +131,80 @@ class Streamer(IStreamer):
         self._buffering = False
         log.info("Flushed %d buffered bars to live queue", count)
 
+    async def _run_with_reconnect(self):
+        """
+        Outer loop: keeps _stream_klines alive with auto-reconnect.
+
+        On disconnect:
+        1. Log the error
+        2. Wait (exponential backoff)
+        3. Recover missed bars via REST (gap recovery)
+        4. Reconnect WS
+        """
+        backoff = self._INITIAL_BACKOFF
+
+        while not self._stopped:
+            try:
+                await self._stream_klines()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                if self._stopped:
+                    break
+
+                self._reconnect_count += 1
+                log.warning(
+                    "WS disconnected (attempt #%d): %s — reconnecting in %.1fs",
+                    self._reconnect_count, e, backoff,
+                )
+
+                if self._MAX_RECONNECTS > 0 and self._reconnect_count > self._MAX_RECONNECTS:
+                    log.error("Max reconnect attempts (%d) reached, giving up", self._MAX_RECONNECTS)
+                    break
+
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * self._BACKOFF_FACTOR, self._MAX_BACKOFF)
+
+                # Gap recovery: fetch recent bars via REST to fill any gap
+                await self._recover_gap()
+
+                # Reset BSM for fresh connection
+                self.bsm = BinanceSocketManager(self.raw_client)
+                continue
+
+            # Clean exit from _stream_klines (shouldn't normally happen)
+            if not self._stopped:
+                log.warning("WS stream ended unexpectedly, reconnecting...")
+                await asyncio.sleep(backoff)
+                await self._recover_gap()
+                self.bsm = BinanceSocketManager(self.raw_client)
+
+        log.info("Reconnect loop exited (total reconnects: %d)", self._reconnect_count)
+
+    async def _recover_gap(self):
+        """
+        After a reconnect, fetch the last few bars via REST to fill
+        any gap caused by the disconnect. BarStore dedup handles overlaps.
+        """
+        log.info("Recovering gap: fetching recent bars via REST...")
+        try:
+            await self.preload_history(
+                self.symbols,
+                self.intervals,
+                limit=5,    # last 5 bars is enough to cover most gaps
+                batch=50,
+            )
+            log.info("Gap recovery complete")
+        except Exception as e:
+            log.warning("Gap recovery failed: %s", e)
+
     async def _stream_klines(self):
         """
         Connect to Binance futures kline multiplex WebSocket.
         Each closed bar (x=True) is either buffered or sent to bar_store+queue.
+
+        Raises on disconnect so _run_with_reconnect can handle retry.
+        Uses heartbeat timeout to detect silent disconnects.
         """
         streams = [
             f"{sym.lower()}@kline_{tf}"
@@ -127,9 +212,26 @@ class Streamer(IStreamer):
             for tf in self.intervals
         ]
 
+        self._last_msg_time = time.monotonic()
+
         sock = self.bsm.futures_multiplex_socket(streams=streams)
         async with sock as stream:
-            async for msg in stream:
+            while not self._stopped:
+                try:
+                    msg = await asyncio.wait_for(
+                        stream.recv(),
+                        timeout=self._HEARTBEAT_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    elapsed = time.monotonic() - self._last_msg_time
+                    log.warning(
+                        "No WS message for %.0fs (timeout=%.0fs) — forcing reconnect",
+                        elapsed, self._HEARTBEAT_TIMEOUT,
+                    )
+                    raise ConnectionError(f"Heartbeat timeout ({elapsed:.0f}s)")
+
+                self._last_msg_time = time.monotonic()
+
                 # Multiplex wraps in {"stream": ..., "data": {...}}
                 data = msg.get("data", msg)
                 k = data.get("k", {})
@@ -156,27 +258,39 @@ class Streamer(IStreamer):
     async def start(self):
         """Start streaming (if not already started via start_buffering)."""
         if self.task is None:
-            self.task = asyncio.create_task(self._stream_klines())
+            self._stopped = False
+            self.task = asyncio.create_task(self._run_with_reconnect())
             log.info(
                 "Kline stream started — %d symbols | tf=%s",
                 len(self.symbols), self.intervals,
             )
 
     async def stop(self):
+        self._stopped = True
         if self.task:
             self.task.cancel()
             try:
                 await self.task
             except asyncio.CancelledError:
                 pass
-        await self.client.close_connection()
-        log.info("Streamer stopped.")
+        try:
+            await self.client.close_connection()
+        except Exception:
+            pass
+        log.info(
+            "Streamer stopped (total reconnects: %d).",
+            self._reconnect_count,
+        )
 
     def get_queue(self):
         return self.queue
 
     async def get(self):
         return await self.queue.get()
+
+    @property
+    def reconnect_count(self) -> int:
+        return self._reconnect_count
 
     # ── Symbol resolution ────────────────────────────────────────────
 

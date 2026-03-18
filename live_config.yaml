@@ -1,0 +1,152 @@
+# =====================================================================
+# live_config.yaml — Multi-Coin Donchian ATR (5m, max 2 pozisyon)
+# =====================================================================
+# Backtest sonuçları (DOGEUSDT, realistic costs):
+#   Return: 91%  |  Sharpe: 0.833  |  Max DD: 15.6%  |  Trades: 7
+#   Realistic 8h funding: Return: 14.3% | Sharpe: 0.876 | DD: 3.15%
+#   Win Rate: 50-66%  |  Profit Factor: 5.18
+#
+# Kullanım:
+#     python live_runner.py --config live_config.yaml
+#     python live_runner.py --config live_config.yaml --dry-run
+# =====================================================================
+
+# ---------- strategy ----------
+# Backtestte en iyi sonuç veren parametreler
+strategy:
+  class: "DonchianATRVolTarget"
+  params:
+    dc_period: 15                  # Backtestte 15 en iyi sonuç verdi
+    atr_period: 14
+    atr_mult: 2.0                  # Backtestte 2.0 optimal (trailing stop mesafesi)
+    risk_pct: 0.003                # %0.3 risk/trade — backtestte bu değer kullanıldı
+    filter_type: "ema"
+    ema_period: 200                # EMA-200 trend filtresi
+    allow_reversal: true
+
+# ---------- symbols & timeframe ----------
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - XRPUSDT
+  - DOGEUSDT
+  - ADAUSDT
+  - AVAXUSDT
+  - DOTUSDT
+  - LINKUSDT
+  - MATICUSDT
+  - NEARUSDT
+  - APTUSDT
+  - ARBUSDT
+  - OPUSDT
+  - SUIUSDT
+  - SEIUSDT
+  - INJUSDT
+  - TIAUSDT
+  - FTMUSDT
+  - ATOMUSDT
+  - FILUSDT
+  - RUNEUSDT
+  - WLDUSDT
+  - PEPEUSDT
+  - WIFUSDT
+
+timeframe: "15m"
+name: "Donchian_MultiCoin_15m"
+
+# ---------- position sizing ----------
+sizing:
+  mode: "margin_usd"
+  margin_usd: 10.0                 # $10 margin per trade
+  leverage: 10                     # 10x → $100 notional per trade
+  leverage_mode: "margin"
+
+# ---------- exit rules ----------
+# Strateji kendi ATR trailing stop'unu kullanıyor.
+# Bunlar exchange tarafı safety net + holding limiti.
+exit:
+  take_profit_pct: 0.04            # %4 TP — backtestte bu değer kullanıldı
+  stop_loss_pct: 0.02              # %2 SL — backtestte bu değer kullanıldı
+  trailing_stop_pct: null          # Strateji ATR trailing kullanıyor
+  max_holding_bars: 96           # 288 bar x 5m = 24 saat MAX tutma süresi
+  use_exchange_orders: true
+
+# =====================================================================
+# LOCAL RISK — trade/pozisyon bazında kontroller
+# =====================================================================
+# Bu kontroller HER YENİ POZİSYON açılmadan önce çalışır.
+# Aşılırsa sadece o trade reddedilir, sistem çalışmaya devam eder.
+risk:
+  max_position_size: 100000.0      # Tek pozisyonda max coin adedi
+  max_position_notional: 500.0     # Tek pozisyon max notional ($500)
+  max_daily_loss: 30.0             # Günlük max kayıp ($30)
+  max_daily_loss_pct: 0.10         # Günlük max kayıp (%10)
+  max_drawdown: 0.20               # %20 drawdown → yeni trade açma
+  max_leverage: 20.0               # Max izin verilen leverage
+  max_concurrent_positions: 2      # Aynı anda MAX 2 pozisyon
+
+# =====================================================================
+# GLOBAL RISK — hesap seviyesinde koruma (TÜM işlemleri durdurur)
+# =====================================================================
+# Bu kontroller HER BAR'da çalışır. Aşılırsa:
+# - Yeni sinyal üretilmez
+# - Kill switch aktif olursa Telegram bildirimi gider
+# - Mevcut pozisyonların exit check'i devam eder
+# - State JSON'a kaydedilir (restart'ta korunur)
+global_risk:
+  max_account_drawdown_pct: 0.15   # %15 hesap drawdown → KILL SWITCH
+                                   # (backtestte max DD %15.6 idi, biraz altında)
+  max_total_exposure_usd: 500.0    # 2 pozisyon x $100 notional + güvenlik payı
+  max_correlated_positions: 2      # Max 2 eşzamanlı pozisyon (risk ile uyumlu)
+  persist_path: "logs/live_risk_state.json"
+
+# ---------- execution ----------
+execution:
+  margin_type: "ISOLATED"
+  preload_bars: 250                # EMA-200 için yeterli
+  preload_batch: 10
+
+# ---------- news sentiment ----------
+news:
+  enabled: true
+
+# ---------- per-symbol overrides ----------
+# BTC ve ETH daha az volatil → daha dar SL/TP
+# Meme coinler daha volatil → daha geniş SL/TP
+symbol_routes:
+  - symbol: BTCUSDT
+    leverage: 10
+    stop_loss_pct: 0.015           # %1.5 SL (düşük volatilite)
+    take_profit_pct: 0.03          # %3 TP
+
+  - symbol: ETHUSDT
+    leverage: 10
+    stop_loss_pct: 0.015
+    take_profit_pct: 0.03
+
+  - symbol: PEPEUSDT
+    leverage: 5                    # Meme coin → düşük leverage
+    margin_usd: 5.0                # Daha az margin
+    stop_loss_pct: 0.03            # %3 SL (yüksek volatilite)
+    take_profit_pct: 0.06          # %6 TP
+
+  - symbol: WIFUSDT
+    leverage: 5
+    margin_usd: 5.0
+    stop_loss_pct: 0.03
+    take_profit_pct: 0.06
+
+  - symbol: DOGEUSDT
+    leverage: 8
+    stop_loss_pct: 0.025           # %2.5 SL
+    take_profit_pct: 0.05          # %5 TP
+
+# ---------- rate limiting ----------
+rate_limit:
+  requests_per_minute: 1000
+  exchange_info_ttl_sec: 300
+
+# ---------- API ----------
+api:
+  testnet: false

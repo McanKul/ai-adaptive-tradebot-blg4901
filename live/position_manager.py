@@ -24,6 +24,7 @@ from binance.enums import (
 from utils.logger import setup_logger
 from Interfaces.IBroker import IBroker
 from live.live_config import SizingConfig, ExitConfig
+from live.position_store import PositionStore
 
 log = setup_logger("PositionManager")
 
@@ -76,6 +77,9 @@ class Position:
         # Trailing stop tracking
         self.peak_price = entry_price
         self.peak_pnl: float = 0.0
+
+        # Throttle for exchange-side fill checks
+        self._last_exchange_check: float = 0.0
 
     @property
     def is_long(self) -> bool:
@@ -265,10 +269,8 @@ class PositionManager:
         if key in self.open_positions or len(self.open_positions) >= self.max_open:
             return False
 
-        # 1) Get mark price
-        mark_price = float(
-            (await self.broker.client.futures_mark_price(symbol=symbol))["markPrice"]
-        )
+        # 1) Get mark price (via broker — rate limited + cached)
+        mark_price = await self.broker.get_mark_price(symbol)
 
         # 2) Compute quantity from SizingConfig
         raw_qty = self.sizing_cfg.compute_qty(mark_price)
@@ -368,7 +370,7 @@ class PositionManager:
 
             # --- Detect exchange-side fill (throttled) ---
             exit_type: Optional[str] = None
-            last_check = getattr(pos, '_last_exchange_check', 0.0)
+            last_check = pos._last_exchange_check
             if now - last_check >= self._EXCHANGE_CHECK_INTERVAL:
                 try:
                     exchange_amt = await self.broker.position_amt(symbol)
@@ -400,8 +402,9 @@ class PositionManager:
                 self.history.append(pos)
                 closed_keys.append(key)
 
-            # Increment bars held counter
-            pos.bars_held += 1
+            # Increment bars held counter (only for still-open positions)
+            if key not in closed_keys:
+                pos.bars_held += 1
 
         for key in closed_keys:
             del self.open_positions[key]
@@ -558,10 +561,11 @@ class LiveSupervisor:
     each symbol's position state, sizing, and exit rules.
     """
 
-    def __init__(self, broker: IBroker):
+    def __init__(self, broker: IBroker, persist_path: str = "logs/live_positions.json"):
         self.broker = broker
         self._managers: Dict[str, PositionManager] = {}
         self.history: List[Position] = []
+        self._store = PositionStore(path=persist_path)
 
     def register_symbol(
         self,
@@ -598,6 +602,53 @@ class LiveSupervisor:
             return 0.0
         return pm.position_qty(symbol)
 
+    def _persist(self):
+        """Save all open positions to disk."""
+        self._store.save(self.open_positions)
+
+    def restore_positions(self):
+        """
+        Load persisted positions into the appropriate PositionManagers.
+        Call AFTER register_symbol() for all symbols.
+        """
+        records = self._store.load()
+        restored = 0
+        for rec in records:
+            sym = rec.get("symbol", "")
+            pm = self._managers.get(sym)
+            if pm is None:
+                log.warning("No manager for persisted position %s — skipping", sym)
+                continue
+
+            strategy = rec.get("strategy", "restored")
+            key = (sym, strategy)
+            if key in pm.open_positions:
+                continue  # already tracked
+
+            pos = Position(
+                symbol=sym,
+                side=rec.get("side", "BUY"),
+                qty=rec.get("qty", 0),
+                entry_price=rec.get("entry_price", 0),
+                sl_price=rec.get("sl_price"),
+                tp_price=rec.get("tp_price"),
+                opened_ts=rec.get("open_ts"),
+                tick=rec.get("tick"),
+                strategy=strategy,
+                timeframe=rec.get("timeframe", "1m"),
+            )
+            pos.bars_held = rec.get("bars_held", 0)
+            pos.sl_order_id = rec.get("sl_order_id")
+            pos.tp_order_id = rec.get("tp_order_id")
+            pos.peak_price = rec.get("peak_price", pos.entry)
+            pos.peak_pnl = rec.get("peak_pnl", 0.0)
+
+            pm.open_positions[key] = pos
+            restored += 1
+
+        if restored:
+            log.info("Restored %d positions from disk", restored)
+
     async def open_position(
         self,
         symbol: str,
@@ -611,7 +662,7 @@ class LiveSupervisor:
         if pm is None:
             log.warning("No manager registered for %s", symbol)
             return False
-        return await pm.open_position(
+        ok = await pm.open_position(
             symbol=symbol,
             side=side,
             strategy_name=strategy_name,
@@ -619,18 +670,26 @@ class LiveSupervisor:
             timeframe=timeframe,
             levels=levels,
         )
+        if ok:
+            self._persist()
+        return ok
 
     async def update_all(self):
+        prev_count = sum(len(pm.open_positions) for pm in self._managers.values())
         for pm in self._managers.values():
             await pm.update_all()
             self.history.extend(pm.history)
             pm.history.clear()
+        new_count = sum(len(pm.open_positions) for pm in self._managers.values())
+        if new_count != prev_count:
+            self._persist()
 
     async def force_close_all(self):
         for pm in self._managers.values():
             await pm.force_close_all()
             self.history.extend(pm.history)
             pm.history.clear()
+        self._persist()
         log.info("Supervisor: all symbols force-closed.")
 
     async def reconcile_all(self, strategy_name: str = "reconciled"):

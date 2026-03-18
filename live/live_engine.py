@@ -29,6 +29,8 @@ from Interfaces.strategy_adapter import StrategyContext
 from live.live_config import LiveConfig
 from live.position_manager import LiveSupervisor
 from live.global_risk import LiveGlobalRisk
+from live.live_metrics import LiveMetrics
+from live.notifier import TelegramNotifier
 from live.streamer import Streamer
 from utils.logger import setup_logger
 
@@ -81,6 +83,12 @@ class LiveEngine:
         self._last_equity: float = 10_000.0
         self._equity_ts: float = 0.0
         self._EQUITY_REFRESH_SEC: float = 30.0
+
+        # ── Live Metrics ─────────────────────────────────────────────
+        self.metrics = LiveMetrics(csv_path="logs/live_trades.csv")
+
+        # ── Notifications ────────────────────────────────────────────
+        self.notifier = TelegramNotifier()
 
         # ── News Sentiment ─────────────────────────────────────────────
         self.news_engine = None
@@ -199,16 +207,18 @@ class LiveEngine:
             batch=self.cfg.execution.preload_batch,
         )
 
-        # 7) Initialize global risk with current equity
+        # 7) Initialize global risk + metrics with current equity
         try:
             self._last_equity = await self.broker.balance("USDT")
             self._equity_ts = time.monotonic()
             self.global_risk.set_start_equity(self._last_equity)
+            self.metrics.set_start_equity(self._last_equity)
             log.info("Starting equity: %.2f USDT", self._last_equity)
         except Exception as e:
             log.warning("Could not fetch starting equity: %s", e)
 
-        # 8) Reconcile orphaned exchange positions
+        # 8) Restore persisted positions + reconcile orphans from exchange
+        self.supervisor.restore_positions()
         await self.supervisor.reconcile_all(strategy_name=self.cfg.name)
 
         # 9) Prefetch news sentiment (if enabled)
@@ -217,7 +227,7 @@ class LiveEngine:
 
         # 10) Flush buffered WS bars → bar_store + queue (dedup handles overlaps)
         self.streamer.flush_buffer()
-
+        await self.notifier.engine_started()
         log.info(
             "LiveEngine started: %d symbols | tf=%s | sentiment=%s | risk=%s",
             len(self.symbols),
@@ -242,6 +252,8 @@ class LiveEngine:
 
                 # ── Global Risk Check ──────────────────────────────────
                 equity = await self._refresh_equity()
+                self.metrics.update_equity(equity)
+                self.metrics.log_daily_summary()
                 try:
                     open_count = len(self.supervisor.open_positions)
                     total_exposure = sum(
@@ -255,6 +267,7 @@ class LiveEngine:
                     )
                     if not risk_ok:
                         log.warning("Global risk block: %s — skipping signals", risk_reason)
+                        await self.notifier.kill_switch(risk_reason)
                         await self.supervisor.update_all()
                         continue
                 except Exception as e:
@@ -309,16 +322,33 @@ class LiveEngine:
                         sym, final_sig, strategy_sig, final_sig,
                     )
 
-                    await self.supervisor.open_position(
+                    opened = await self.supervisor.open_position(
                         symbol=sym,
                         side=final_sig,
                         strategy_name=self.cfg.name,
                         leverage=leverage,
                         timeframe=tf,
                     )
+                    if opened:
+                        await self.notifier.position_opened(
+                            sym, "LONG" if final_sig > 0 else "SHORT",
+                            0, float(bar_dict.get("c", 0)), leverage,
+                        )
 
                 # ── Update existing positions (exit checks) ────────────
+                prev_history_len = len(self.supervisor.history)
                 await self.supervisor.update_all()
+
+                # Record newly closed positions to metrics + notify
+                for pos in self.supervisor.history[prev_history_len:]:
+                    self.metrics.record(pos)
+                    if pos.exit is not None:
+                        pnl = pos.unrealized_pnl(pos.exit)
+                        pnl_pct = pos.unrealized_pnl_pct(pos.exit) * 100
+                        await self.notifier.position_closed(
+                            pos.symbol, pos.side, pnl, pnl_pct,
+                            pos.exit_type or "UNKNOWN",
+                        )
 
         finally:
             await self.streamer.stop()
@@ -327,12 +357,21 @@ class LiveEngine:
     # ── Shutdown ──────────────────────────────────────────────────────
 
     async def shutdown(self):
-        """Graceful shutdown: close all positions and stop streamer."""
+        """Graceful shutdown: close all positions, log final metrics, stop streamer."""
         log.info("Shutting down...")
         try:
+            prev_len = len(self.supervisor.history)
             await self.supervisor.force_close_all()
+            # Record force-closed positions
+            for pos in self.supervisor.history[prev_len:]:
+                self.metrics.record(pos)
         except Exception as e:
             log.error("Error during force close: %s", e)
+
+        # Final metrics summary
+        log.info("═══ FINAL SESSION METRICS ═══")
+        self.metrics._log_summary()
+        log.info("Trade log saved to: %s", self.metrics._csv_path)
 
         if self.streamer:
             try:
