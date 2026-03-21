@@ -153,7 +153,10 @@ class PositionManager:
         return (math.ceil if up else math.floor)(raw * factor) / factor
 
     async def _symbol_filters(self, symbol: str, qty_f: float) -> tuple[float, float]:
-        """Query exchange LOT_SIZE & PRICE_FILTER for *symbol* (cached)."""
+        """Query exchange LOT_SIZE & PRICE_FILTER for *symbol* (cached).
+        Returns (rounded_qty, tick_size). Falls back to (qty_f, 0.0) if
+        filters are unavailable (e.g. DryBroker or exchange_info error).
+        """
         try:
             if hasattr(self.broker, 'exchange_info'):
                 info = await self.broker.exchange_info()
@@ -171,10 +174,12 @@ class PositionManager:
                             tick = float(f["tickSize"])
                     if tick is not None and step is not None:
                         return step, tick
-            return 0.0, 0.0
+            # Symbol not found in exchange info — use raw qty (e.g. DryBroker)
+            log.debug("%s not found in exchange_info, using raw qty=%.6f", symbol, qty_f)
+            return qty_f, 0.0
         except Exception as e:
             log.error("Failed to get LOT_SIZE/PRICE_FILTER %s: %s", symbol, e)
-            return 0.0, 0.0
+            return qty_f, 0.0
 
     # ------------------------------------------------------------------
     # Compute SL / TP prices

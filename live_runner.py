@@ -134,9 +134,17 @@ async def main(config_path: str, dry_run: bool = False):
 
     # 3) Create broker (real or paper)
     client = None
+    market_client = None  # Separate client for WebSocket / preload in dry-run
     if dry_run:
         from live.dry_broker import DryBroker
-        broker = DryBroker(initial_balance=10_000.0)
+        # Still need a real Binance client for WebSocket market data
+        api_key = os.getenv("BINANCE_API_KEY", "")
+        api_secret = os.getenv("BINANCE_API_SECRET", "")
+        raw_client = await AsyncClient.create(api_key, api_secret, testnet=cfg.testnet)
+        client = BinanceClient(raw_client)
+        market_client = client  # Engine uses this for Streamer; DryBroker handles orders
+        broker = DryBroker(initial_balance=10_000.0, market_client=market_client)
+        log.info("[DRY-RUN] Real client for market data (WS/REST), DryBroker for orders")
     else:
         api_key = os.getenv("BINANCE_API_KEY", "")
         api_secret = os.getenv("BINANCE_API_SECRET", "")
@@ -168,6 +176,7 @@ async def main(config_path: str, dry_run: bool = False):
         news_source=news_source,
         sentiment_analyzer=sentiment_analyzer,
         signal_combiner=signal_combiner,
+        market_client=market_client,  # Real client for WS in dry-run
     )
 
     # 7) Register SIGTERM/SIGINT for graceful shutdown (Docker/systemd)
