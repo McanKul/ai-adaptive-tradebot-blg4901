@@ -109,7 +109,7 @@ execution:
 
 # ---------- news sentiment ----------
 news:
-  enabled: true
+  enabled: false
 
 # ---------- per-symbol overrides ----------
 # BTC ve ETH daha az volatil → daha dar SL/TP
