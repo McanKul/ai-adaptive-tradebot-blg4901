@@ -73,12 +73,14 @@ class DryBroker(IBroker):
     Paper-trading broker — no real API calls.
 
     Tracks positions and balance locally. Orders fill instantly at mark price.
+    Pass market_client to enable real mark-price lookups for accurate sizing.
     """
 
-    def __init__(self, initial_balance: float = 10_000.0):
+    def __init__(self, initial_balance: float = 10_000.0, market_client=None):
         self._balance = initial_balance
         self._positions: Dict[str, float] = {}    # symbol → signed qty
         self._prices: Dict[str, float] = {}       # symbol → last known price
+        self._market_client = market_client       # Real client for mark price
         self._client_stub = _DryClient(self)
         self._order_counter = 9000
         self._exchange_info: dict = {"symbols": []}
@@ -96,7 +98,19 @@ class DryBroker(IBroker):
         return self._client_stub
 
     async def get_mark_price(self, symbol: str) -> float:
-        return self._prices.get(symbol, 0.0)
+        # Use cached price if available (set by engine via bar data)
+        if symbol in self._prices:
+            return self._prices[symbol]
+        # Fall back to real API if market_client provided
+        if self._market_client is not None:
+            try:
+                data = await self._market_client.raw_client.futures_mark_price(symbol=symbol)
+                price = float(data["markPrice"])
+                self._prices[symbol] = price
+                return price
+            except Exception as e:
+                log.warning("DryBroker: mark price fetch failed for %s: %s", symbol, e)
+        return 0.0
 
     def set_price(self, symbol: str, price: float):
         """Set simulated mark price (called by engine or test harness)."""

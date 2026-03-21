@@ -59,11 +59,14 @@ class LiveEngine:
         news_source: Optional[INewsSource] = None,
         sentiment_analyzer: Optional[ISentimentAnalyzer] = None,
         signal_combiner: Optional[ISignalCombiner] = None,
+        market_client=None,  # Real client for WebSocket/preload in dry-run mode
     ):
         self.cfg = cfg
         self.broker = broker
         self.global_risk = global_risk
         self.bar_store = BarStore()
+        # Use dedicated market client if provided (e.g. dry-run needs real WS)
+        self._market_client = market_client or broker.client
 
         # ── Strategy Instance ──────────────────────────────────────────
         self.strategy = strategy_cls(
@@ -165,7 +168,7 @@ class LiveEngine:
 
         # 1) Resolve symbols
         self.symbols = await Streamer.resolve_symbols(
-            self.broker.client, self.cfg.symbols,
+            self._market_client, self.cfg.symbols,
         )
         log.info("Resolved %d symbols: %s", len(self.symbols), self.symbols)
 
@@ -188,9 +191,9 @@ class LiveEngine:
             except Exception as e:
                 log.error("[%s] margin/leverage setup failed: %s", sym, e)
 
-        # 4) Create streamer
+        # 4) Create streamer (use market_client if set, e.g. in dry-run mode)
         self.streamer = Streamer(
-            self.broker.client,
+            self._market_client,
             self.symbols,
             self.timeframes,
             bar_store=self.bar_store,
@@ -286,6 +289,11 @@ class LiveEngine:
                     volume=float(bar_dict.get("v", 0)),
                 )
 
+                # Feed latest close price to DryBroker so sizing works correctly
+                close_price = float(bar_dict.get("c", 0))
+                if hasattr(self.broker, "set_price") and close_price > 0:
+                    self.broker.set_price(sym, close_price)
+
                 # Current position for this symbol
                 current_pos = self.supervisor.position_qty(sym)
 
@@ -330,9 +338,10 @@ class LiveEngine:
                         timeframe=tf,
                     )
                     if opened:
+                        actual_qty = abs(self.supervisor.position_qty(sym))
                         await self.notifier.position_opened(
                             sym, "LONG" if final_sig > 0 else "SHORT",
-                            0, float(bar_dict.get("c", 0)), leverage,
+                            actual_qty, float(bar_dict.get("c", 0)), leverage,
                         )
 
                 # ── Update existing positions (exit checks) ────────────
