@@ -312,12 +312,32 @@ class LiveEngine:
 
                 # Extract signal: from orders or from legacy signal field
                 strategy_sig = None
+                has_exit_signal = False
+                exit_reason = None
+
                 if decision.has_orders:
-                    first_order = decision.orders[0]
-                    if not getattr(first_order, 'reduce_only', False):
-                        strategy_sig = "+1" if first_order.side == OrderSide.BUY else "-1"
+                    for order in decision.orders:
+                        if getattr(order, 'reduce_only', False):
+                            has_exit_signal = True
+                            exit_reason = (decision.metadata or {}).get(
+                                "exit_reason", "STRATEGY_EXIT"
+                            )
+                        else:
+                            strategy_sig = "+1" if order.side == OrderSide.BUY else "-1"
                 elif decision.has_signal:
                     strategy_sig = decision.signal
+
+                # ── Handle strategy exit signals (reduce_only) ────────
+                prev_history_len = len(self.supervisor.history)
+
+                if has_exit_signal and self.supervisor.position_qty(sym) != 0.0:
+                    exit_type_str = exit_reason or "STRATEGY_EXIT"
+                    log.info("[%s] Strategy exit signal: %s", sym, exit_type_str)
+                    await self.supervisor.close_position(
+                        symbol=sym,
+                        strategy_name=self.cfg.name,
+                        exit_type=exit_type_str,
+                    )
 
                 # ── Combine with Sentiment ─────────────────────────────
                 final_sig = await self._get_combined_signal(sym, strategy_sig)
@@ -345,7 +365,6 @@ class LiveEngine:
                         )
 
                 # ── Update existing positions (exit checks) ────────────
-                prev_history_len = len(self.supervisor.history)
                 await self.supervisor.update_all()
 
                 # Record newly closed positions to metrics + notify

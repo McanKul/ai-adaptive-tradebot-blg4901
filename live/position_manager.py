@@ -204,11 +204,17 @@ class PositionManager:
         ecfg = self.exit_cfg
 
         # --- Stop Loss ---
+        # Convert margin-return pct to price pct (leverage-aware)
+        # In backtest, stop_loss_pct is margin-based: 0.02 = 2% of margin
+        # Price move needed = margin_pct / leverage
+        leverage = self.sizing_cfg.leverage if self.sizing_cfg.leverage > 0 else 1
+
         if ecfg.stop_loss_pct is not None:
+            sl_pct = ecfg.stop_loss_pct / leverage
             if side_str == SIDE_BUY:
-                sl_price = entry_price * (1 - ecfg.stop_loss_pct)
+                sl_price = entry_price * (1 - sl_pct)
             else:
-                sl_price = entry_price * (1 + ecfg.stop_loss_pct)
+                sl_price = entry_price * (1 + sl_pct)
 
         elif ecfg.stop_loss_usd is not None and self.sizing_cfg.margin_usd > 0:
             # Convert USD loss to price delta:  delta_price = loss_usd / qty
@@ -224,10 +230,11 @@ class PositionManager:
 
         # --- Take Profit ---
         if ecfg.take_profit_pct is not None:
+            tp_pct = ecfg.take_profit_pct / leverage
             if side_str == SIDE_BUY:
-                tp_price = entry_price * (1 + ecfg.take_profit_pct)
+                tp_price = entry_price * (1 + tp_pct)
             else:
-                tp_price = entry_price * (1 - ecfg.take_profit_pct)
+                tp_price = entry_price * (1 - tp_pct)
 
         elif ecfg.take_profit_usd is not None and self.sizing_cfg.margin_usd > 0:
             leverage = self.sizing_cfg.leverage
@@ -457,7 +464,10 @@ class PositionManager:
                     peak_pct = pos.peak_pnl / notional
                     curr_pct = current_pnl / notional
                     drawdown = peak_pct - curr_pct
-                    if drawdown >= ecfg.trailing_stop_pct:
+                    # Convert margin-based trailing_stop_pct to price-based
+                    leverage = self.sizing_cfg.leverage if self.sizing_cfg.leverage > 0 else 1
+                    trail_pct = ecfg.trailing_stop_pct / leverage
+                    if drawdown >= trail_pct:
                         return "TRAILING"
 
         # --- Max Holding Bars ---
@@ -470,6 +480,31 @@ class PositionManager:
     # ------------------------------------------------------------------
     # Force close all
     # ------------------------------------------------------------------
+    async def close_position_by_strategy(
+        self, symbol: str, strategy_name: str, exit_type: str = "STRATEGY_EXIT"
+    ) -> bool:
+        """Close a position triggered by strategy exit signal (e.g. ATR trailing stop)."""
+        key = (symbol, strategy_name)
+        pos = self.open_positions.get(key)
+        if pos is None or pos.closed:
+            return False
+
+        try:
+            mark_price = await self.broker.get_mark_price(symbol)
+            await self.broker.close_position(symbol)
+            await self._cancel_position_orders(pos)
+        except Exception as e:
+            log.error("%s strategy-exit close failed: %s", symbol, e)
+            return False
+
+        pos.closed = True
+        pos.exit_ts = time.time()
+        pos.exit = mark_price
+        pos.exit_type = exit_type
+        self.history.append(pos)
+        del self.open_positions[key]
+        return True
+
     async def force_close_all(self):
         to_remove: List[tuple] = []
 
@@ -676,6 +711,20 @@ class LiveSupervisor:
             levels=levels,
         )
         if ok:
+            self._persist()
+        return ok
+
+    async def close_position(
+        self, symbol: str, strategy_name: str, exit_type: str = "STRATEGY_EXIT"
+    ) -> bool:
+        """Close a position triggered by strategy exit signal."""
+        pm = self._managers.get(symbol)
+        if pm is None:
+            return False
+        ok = await pm.close_position_by_strategy(symbol, strategy_name, exit_type)
+        if ok:
+            self.history.extend(pm.history)
+            pm.history.clear()
             self._persist()
         return ok
 
