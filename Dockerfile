@@ -16,4 +16,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["python", "live_runner.py"]
+CMD ["python", "live_runner.py","--config","live_config.yaml"]
