@@ -6,6 +6,10 @@ class BarStore:
     Centralized OHLCV buffer for all symbol-timeframe combinations.
     ▸ add_bar(...)   : Adds a closed bar from Streamer
     ▸ get_ohlcv(...) : Strategies fetch data from here
+
+    Timestamp-based dedup: if a bar with the same open timestamp arrives
+    again (e.g. preload vs WebSocket overlap), the last values are replaced
+    instead of appending a duplicate.
     """
 
     def __init__(self, maxlen: int = 600):
@@ -14,21 +18,41 @@ class BarStore:
         self._data: Dict[tuple[str, str], Dict[str, List[float]]] = defaultdict(
             lambda: {"open": [], "high": [], "low": [], "close": [], "volume": []}
         )
+        # last open-timestamp per (symbol, tf) for dedup
+        self._last_ts: Dict[tuple[str, str], int] = {}
 
     # ---------------- Called by Streamer -----------------
     def add_bar(self, symbol: str, tf: str, k: Dict[str, Any]) -> None:
         """Add closed candle from Binance kline JSON."""
-        # Ensure bar is closed (though streamer typically checks this too)
-        # If 'x' key is missing, assume it's a closed bar provided by historical fetch
-        if "x" in k and not k["x"]:   
+        # Ensure bar is closed
+        if "x" in k and not k["x"]:
             return
-            
-        buf = self._data[(symbol, tf)]
+
+        # Open timestamp: REST uses "t", old streamer used "start"
+        ts = k.get("t") or k.get("start")
+        if ts is not None:
+            ts = int(ts)
+
+        key = (symbol, tf)
+        buf = self._data[key]
+
+        # Dedup: same open timestamp as last bar → replace instead of append
+        if ts is not None and self._last_ts.get(key) == ts and len(buf["open"]) > 0:
+            buf["open"][-1] = float(k["o"])
+            buf["high"][-1] = float(k["h"])
+            buf["low"][-1] = float(k["l"])
+            buf["close"][-1] = float(k["c"])
+            buf["volume"][-1] = float(k["v"])
+            return
+
         buf["open"].append(float(k["o"]))
         buf["high"].append(float(k["h"]))
         buf["low"].append(float(k["l"]))
         buf["close"].append(float(k["c"]))
         buf["volume"].append(float(k["v"]))
+
+        if ts is not None:
+            self._last_ts[key] = ts
 
         # maxlen protection
         for arr in buf.values():

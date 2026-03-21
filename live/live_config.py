@@ -16,6 +16,7 @@ Usage:
 """
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List
 import logging
@@ -149,6 +150,21 @@ class GlobalRiskConfig:
 
 
 # ---------------------------------------------------------------------------
+# News sentiment settings
+# ---------------------------------------------------------------------------
+@dataclass
+class NewsConfig:
+    """News sentiment analysis configuration."""
+    enabled: bool = False
+    sentiment_provider: str = "gemini"      # "gemini" | "openai"
+    api_key: Optional[str] = None           # Override env var (GOOGLE_API_KEY / OPENAI_API_KEY)
+    refresh_interval: int = 300             # Seconds between sentiment refreshes
+    news_limit: int = 5                     # Max articles per symbol per fetch
+    buy_threshold: float = 0.6             # Sentiment > this + BUY signal → LONG
+    sell_threshold: float = 0.4            # Sentiment < this + SELL signal → SHORT
+
+
+# ---------------------------------------------------------------------------
 # Rate-limit settings
 # ---------------------------------------------------------------------------
 @dataclass
@@ -184,6 +200,9 @@ class LiveConfig:
     levels: LevelsConfig = field(default_factory=LevelsConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
 
+    # News sentiment
+    news: NewsConfig = field(default_factory=NewsConfig)
+
     # Multi-coin & global risk
     symbol_routes: Dict[str, SymbolRoute] = field(default_factory=dict)
     global_risk: GlobalRiskConfig = field(default_factory=GlobalRiskConfig)
@@ -198,7 +217,6 @@ class LiveConfig:
         route = self.symbol_routes.get(symbol)
         if route is None:
             return self.sizing
-        import copy
         s = copy.copy(self.sizing)
         if route.leverage is not None:
             s.leverage = route.leverage
@@ -211,7 +229,6 @@ class LiveConfig:
         route = self.symbol_routes.get(symbol)
         if route is None:
             return self.exit
-        import copy
         e = copy.copy(self.exit)
         if route.take_profit_pct is not None:
             e.take_profit_pct = route.take_profit_pct
@@ -245,6 +262,7 @@ class LiveConfig:
         risk_d = d.get("risk", {})
         levels_d = d.get("levels", {})
         exec_d = d.get("execution", {})
+        news_d = d.get("news", {})
         api_d = d.get("api", {})
         gr_d = d.get("global_risk", {})
         rl_d = d.get("rate_limit", {})
@@ -272,6 +290,7 @@ class LiveConfig:
             risk=_pick(RiskConfig, risk_d),
             levels=_pick(LevelsConfig, levels_d),
             execution=_pick(ExecutionConfig, exec_d),
+            news=_pick(NewsConfig, news_d),
             symbol_routes=routes,
             global_risk=_pick(GlobalRiskConfig, gr_d),
             rate_limit=_pick(RateLimitConfig, rl_d),

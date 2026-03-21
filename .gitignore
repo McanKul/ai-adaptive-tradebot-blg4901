@@ -8,6 +8,9 @@ ai-adaptive-tradebot-blg4901/ta_lib-0.6.8-cp312-cp312-win_amd64.whl
 # C extensions
 *.so
 
+
+/logs
+
 # Distribution / packaging
 .Python
 build/
