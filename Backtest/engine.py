@@ -194,6 +194,14 @@ class EngineConfig:
     # BarStore
     bar_store_maxlen: int = 600
     
+    # Exit rules (strategy-independent TP/SL/trailing safety net)
+    # These are margin-return percentages when leverage > 1
+    # e.g. tp_pct=0.04 with leverage=10 → exit when price moves 0.4% (4% margin return)
+    tp_pct: Optional[float] = None
+    sl_pct: Optional[float] = None
+    trailing_stop_pct: Optional[float] = None
+    max_holding_bars: Optional[int] = None
+
     # NEW: Support/Resistance tracking
     enable_sr_tracking: bool = False
     sr_window: int = 50
@@ -1030,6 +1038,21 @@ class BacktestEngine:
                     log.info(f"Created exit manager from strategy params: {params}")
                     return
         
+        # Try engine config TP/SL (strategy-independent)
+        if any([self.config.tp_pct, self.config.sl_pct,
+                self.config.trailing_stop_pct, self.config.max_holding_bars]):
+            config = ExitConfig(
+                take_profit_pct=self.config.tp_pct,
+                stop_loss_pct=self.config.sl_pct,
+                trailing_stop_pct=self.config.trailing_stop_pct,
+                max_holding_bars=self.config.max_holding_bars,
+                leverage=self.config.leverage,
+            )
+            self.exit_manager = ExitManager(config)
+            log.info("Created exit manager from engine config: tp=%s sl=%s trail=%s",
+                     self.config.tp_pct, self.config.sl_pct, self.config.trailing_stop_pct)
+            return
+
         # No exit manager
         self.exit_manager = None
         log.debug("No exit manager configured - tick-level TP/SL disabled")

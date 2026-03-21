@@ -18,7 +18,7 @@ strategy:
   params:
     dc_period: 15                  # Backtestte 15 en iyi sonuç verdi
     atr_period: 14
-    atr_mult: 2.0                  # Backtestte 2.0 optimal (trailing stop mesafesi)
+    atr_mult: 1.5                  # Sweep sonucu: 1.5 optimal (trailing stop mesafesi)
     risk_pct: 0.003                # %0.3 risk/trade — backtestte bu değer kullanıldı
     filter_type: "ema"
     ema_period: 200                # EMA-200 trend filtresi
@@ -66,8 +66,8 @@ sizing:
 # Strateji kendi ATR trailing stop'unu kullanıyor.
 # Bunlar exchange tarafı safety net + holding limiti.
 exit:
-  take_profit_pct: 0.04            # %4 TP — backtestte bu değer kullanıldı
-  stop_loss_pct: 0.02              # %2 SL — backtestte bu değer kullanıldı
+  take_profit_pct: null             # Backtest sonucu: TP kapalı, ATR trailing stop yeterli
+  stop_loss_pct: null               # Backtest sonucu: SL kapalı, ATR trailing stop yeterli
   trailing_stop_pct: null          # Strateji ATR trailing kullanıyor
   max_holding_bars: 96           # 288 bar x 5m = 24 saat MAX tutma süresi
   use_exchange_orders: true
@@ -117,8 +117,8 @@ news:
 symbol_routes:
   - symbol: BTCUSDT
     leverage: 10
-    stop_loss_pct: 0.015           # %1.5 SL (düşük volatilite)
-    take_profit_pct: 0.03          # %3 TP
+    # stop_loss_pct: 0.015           # %1.5 SL (düşük volatilite)
+    # take_profit_pct: 0.03          # %3 TP
 
   - symbol: ETHUSDT
     leverage: 10
@@ -128,19 +128,19 @@ symbol_routes:
   - symbol: PEPEUSDT
     leverage: 5                    # Meme coin → düşük leverage
     margin_usd: 5.0                # Daha az margin
-    stop_loss_pct: 0.03            # %3 SL (yüksek volatilite)
-    take_profit_pct: 0.06          # %6 TP
+    # stop_loss_pct: 0.03            # %3 SL (yüksek volatilite)
+    # take_profit_pct: 0.06          # %6 TP
 
   - symbol: WIFUSDT
     leverage: 5
     margin_usd: 5.0
-    stop_loss_pct: 0.03
-    take_profit_pct: 0.06
+    # stop_loss_pct: 0.03
+    # take_profit_pct: 0.06
 
   - symbol: DOGEUSDT
     leverage: 8
-    stop_loss_pct: 0.025           # %2.5 SL
-    take_profit_pct: 0.05          # %5 TP
+    # stop_loss_pct: 0.025           # %2.5 SL
+    # take_profit_pct: 0.05          # %5 TP
 
 # ---------- rate limiting ----------
 rate_limit:
