@@ -91,9 +91,15 @@ class BacktestConfig:
     # NEW: Tick-level exit checking
     enable_tick_exit: bool = True  # Enable tick-level TP/SL checking
 
+    # Exit rules (strategy-independent TP/SL safety net)
+    tp_pct: Optional[float] = None
+    sl_pct: Optional[float] = None
+    trailing_stop_pct: Optional[float] = None
+    max_holding_bars: Optional[int] = None
+
     # NEW: Realism configuration (Part A refactor)
     realism: RealismConfig = field(default_factory=RealismConfig)
-    
+
     def to_engine_config(self) -> EngineConfig:
         """Convert to EngineConfig for BacktestEngine."""
         return EngineConfig(
@@ -131,6 +137,11 @@ class BacktestConfig:
             maintenance_margin_ratio=self.maintenance_margin_ratio,
             # NEW: Tick exit
             enable_tick_exit=self.enable_tick_exit,
+            # Exit rules
+            tp_pct=self.tp_pct,
+            sl_pct=self.sl_pct,
+            trailing_stop_pct=self.trailing_stop_pct,
+            max_holding_bars=self.max_holding_bars,
             # NEW: Realism config passthrough
             realism=self.realism,
         )
