@@ -1,7 +1,7 @@
 python-binance
 pandas
 numpy
-talib
+Ta-lib
 asyncio
 pytest
 pytest-asyncio
