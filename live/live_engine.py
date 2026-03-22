@@ -374,7 +374,10 @@ class LiveEngine:
                         )
 
                 # ── Update existing positions (exit checks) ────────────
-                await self.supervisor.update_all()
+                # Only update the current symbol's position manager
+                # to prevent bars_held from incrementing once per every
+                # symbol's bar event (25 coins = 25x faster expiry).
+                await self.supervisor.update_symbol(sym)
 
                 # Record newly closed positions to metrics + notify
                 for pos in self.supervisor.history[prev_history_len:]:
