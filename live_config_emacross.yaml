@@ -39,8 +39,7 @@ strategy:
 
 # ---------- symbols & timeframe ----------
 symbols:
-  - BTCUSDT
-  - ETHUSDT
+  # BTCUSDT/ETHUSDT removed — $5 margin too low for min lot size
   - SOLUSDT
   - XRPUSDT
   - DOGEUSDT
@@ -82,7 +81,7 @@ exit:
   take_profit_pct: null               # Strateji kendi cikisini yapiyor
   stop_loss_pct: null                 # ATR trailing stop yeterli
   trailing_stop_pct: null             # Strateji icinde var (ATR-based)
-  max_holding_bars: 16               # 288 bar x 5m = 24 saat MAX tutma suresi
+  max_holding_bars: 96               # 96 bar x 5m = 8 saat MAX tutma suresi (safety net)
   use_exchange_orders: true
 
 # =====================================================================
@@ -128,12 +127,6 @@ news:
 # BTC ve ETH daha az volatil → daha dar stop
 # Meme coinler daha volatil → daha genis stop, dusuk leverage
 symbol_routes:
-  - symbol: BTCUSDT
-    leverage: 10
-
-  - symbol: ETHUSDT
-    leverage: 10
-
   - symbol: 1000PEPEUSDT
     leverage: 5                       # Meme coin → dusuk leverage
     margin_usd: 3.0                   # Daha az margin
