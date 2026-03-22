@@ -48,7 +48,7 @@ symbols:
   - AVAXUSDT
   - DOTUSDT
   - LINKUSDT
-  - MATICUSDT
+  - POLUSDT
   - NEARUSDT
   - APTUSDT
   - ARBUSDT
@@ -71,8 +71,8 @@ name: "EMACross_MACD_Trend_15m"
 # ---------- position sizing ----------
 sizing:
   mode: "margin_usd"
-  margin_usd: 10.0                    # $10 margin per trade
-  leverage: 10                        # 10x → $100 notional per trade
+  margin_usd: 5.0                     # $5 margin per trade ($21 bakiye icin uygun)
+  leverage: 10                        # 10x → $50 notional per trade
   leverage_mode: "margin"
 
 # ---------- exit rules ----------
@@ -82,7 +82,7 @@ exit:
   take_profit_pct: null               # Strateji kendi cikisini yapiyor
   stop_loss_pct: null                 # ATR trailing stop yeterli
   trailing_stop_pct: null             # Strateji icinde var (ATR-based)
-  max_holding_bars: 8                 # 96 bar x 15m = 24 saat MAX tutma suresi
+  max_holding_bars: 16               # 288 bar x 5m = 24 saat MAX tutma suresi
   use_exchange_orders: true
 
 # =====================================================================
@@ -92,8 +92,8 @@ exit:
 # Asilirsa sadece o trade reddedilir, sistem calismaya devam eder.
 risk:
   max_position_size: 100000.0         # Tek pozisyonda max coin adedi
-  max_position_notional: 500.0        # Tek pozisyon max notional ($500)
-  max_daily_loss: 30.0                # Gunluk max kayip ($30)
+  max_position_notional: 100.0         # Tek pozisyon max notional ($100)
+  max_daily_loss: 10.0                # Gunluk max kayip ($10)
   max_daily_loss_pct: 0.10            # Gunluk max kayip (%10)
   max_drawdown: 0.20                  # %20 drawdown → yeni trade acma
   max_leverage: 20.0                  # Max izin verilen leverage
@@ -110,7 +110,7 @@ risk:
 global_risk:
   max_account_drawdown_pct: 0.10      # %10 hesap drawdown → KILL SWITCH
                                       # (backtestte max DD %1.25 idi, genis marj)
-  max_total_exposure_usd: 500.0       # 2 pozisyon x $100 notional + guvenlik payi
+  max_total_exposure_usd: 150.0       # 2 pozisyon x $50 notional + guvenlik payi
   max_correlated_positions: 2         # Max 2 eszamanli pozisyon
   persist_path: "logs/live_risk_state_emacross.json"
 
@@ -136,7 +136,7 @@ symbol_routes:
 
   - symbol: 1000PEPEUSDT
     leverage: 5                       # Meme coin → dusuk leverage
-    margin_usd: 5.0                   # Daha az margin
+    margin_usd: 3.0                   # Daha az margin
 
   - symbol: WIFUSDT
     leverage: 5

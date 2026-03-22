@@ -310,6 +310,15 @@ class LiveEngine:
                 # ── Generate Signal (supports both modes) ─────────────
                 decision = self.strategy.on_bar(bar, ctx)
 
+                # Debug: log strategy decision summary
+                if decision.has_orders:
+                    order_sides = [f"{o.side.value}{'(exit)' if getattr(o,'reduce_only',False) else ''}" for o in decision.orders]
+                    log.info("[%s] Strategy decision: %d orders [%s] | features=%s",
+                             sym, len(decision.orders), ", ".join(order_sides),
+                             {k: f"{v:.4f}" if isinstance(v, float) else v
+                              for k, v in (decision.features or {}).items()
+                              if k in ("fast_ema", "slow_ema", "histogram", "adx", "atr")})
+
                 # Extract signal: from orders or from legacy signal field
                 strategy_sig = None
                 has_exit_signal = False
