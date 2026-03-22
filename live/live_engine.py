@@ -75,7 +75,10 @@ class LiveEngine:
         )
 
         # ── LiveSupervisor (per-symbol PositionManager) ────────────────
-        self.supervisor = LiveSupervisor(broker)
+        self.supervisor = LiveSupervisor(
+            broker,
+            max_global_positions=cfg.risk.max_concurrent_positions,
+        )
 
         # ── Streamer ───────────────────────────────────────────────────
         self.timeframes = [cfg.timeframe]

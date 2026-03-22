@@ -139,9 +139,9 @@ class LiveGlobalRisk:
             )
 
         # Correlated positions
-        if open_position_count > self.cfg.max_correlated_positions:
+        if open_position_count >= self.cfg.max_correlated_positions:
             return False, (
-                f"correlated positions {open_position_count} > "
+                f"correlated positions {open_position_count} >= "
                 f"{self.cfg.max_correlated_positions}"
             )
 
