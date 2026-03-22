@@ -249,6 +249,21 @@ class Strategy(IStrategy):
         short_macd = curr_histogram < 0 and curr_histogram < prev_histogram
         short_ok = short_ema and short_macd and adx_pass and vol_pass
 
+        # Debug: log entry condition breakdown periodically
+        if st["bar_count"] % 50 == 0 or long_ok or short_ok:
+            import logging
+            _log = logging.getLogger("EMACross")
+            _log.info(
+                "[%s] ENTRY CHECK: fast_ema=%.4f slow_ema=%.4f | "
+                "long_ema=%s long_macd=%s(hist=%.6f prev=%.6f) adx=%s(%.1f) vol=%s | "
+                "short_ema=%s short_macd=%s | LONG=%s SHORT=%s | pos=%.4f",
+                bar.symbol, curr_fast_ema, curr_slow_ema,
+                long_ema, long_macd, curr_histogram, prev_histogram,
+                adx_pass, adx_val or 0, vol_pass,
+                short_ema, short_macd,
+                long_ok, short_ok, position,
+            )
+
         if long_ok and position <= 1e-10:
             if position < -1e-10 and self.allow_reversal:
                 orders.append(self._exit_order(bar, position))
