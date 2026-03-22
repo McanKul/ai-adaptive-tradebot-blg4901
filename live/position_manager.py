@@ -728,6 +728,18 @@ class LiveSupervisor:
             self._persist()
         return ok
 
+    async def update_symbol(self, symbol: str):
+        """Update only the position manager for a specific symbol."""
+        pm = self._managers.get(symbol)
+        if pm is None:
+            return
+        had = len(pm.open_positions)
+        await pm.update_all()
+        self.history.extend(pm.history)
+        pm.history.clear()
+        if len(pm.open_positions) != had:
+            self._persist()
+
     async def update_all(self):
         prev_count = sum(len(pm.open_positions) for pm in self._managers.values())
         for pm in self._managers.values():
