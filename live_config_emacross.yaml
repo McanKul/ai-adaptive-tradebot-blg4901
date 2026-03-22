@@ -1,0 +1,155 @@
+# =====================================================================
+# live_config_emacross.yaml — EMA Cross + MACD Trend (15m, max 2 poz)
+# =====================================================================
+# Backtest sonuclari (AVAXUSDT, 28 gun, realistic costs):
+#   Calmar #1: EMA(12/21) sig=9 atr=2.5 adx=20 → ret=+0.97% calmar=10.48
+#   Calmar #4: EMA(16/21) sig=9 atr=3.0 adx=25 → ret=+0.80% calmar=8.80
+#   Calmar #5: EMA(12/21) sig=9 atr=2.5 adx=25 → ret=+0.69% calmar=8.50
+#
+# Sweep ozeti (216 kombo):
+#   ATR=2.5 → %68 pozitif (sweet spot)
+#   ADX=25  → %56 pozitif, dusuk DD
+#   MACD exit=ON → %66 pozitif (KRITIK)
+#   EMA(8/26), (12/21) en iyi pairler
+#
+# Secim: Calmar #5 (konservatif) — dusuk DD, robust
+#
+# Kullanim:
+#     python live_runner.py --config live_config_emacross.yaml
+#     python live_runner.py --config live_config_emacross.yaml --dry-run
+# =====================================================================
+
+# ---------- strategy ----------
+# 216 kombo sweep sonucu optimize edilmis parametreler
+strategy:
+  class: "EMACrossMACDTrend"
+  params:
+    fast_ema_period: 12               # Sweep: 8 ve 12 en iyi, 12 daha stabil
+    slow_ema_period: 21               # Sweep: 21 tutarli kazanan
+    macd_signal: 9                    # Klasik MACD sinyal, 12'den tutarli
+    atr_period: 14                    # Standart ATR
+    atr_mult: 2.5                     # Sweep: %68 pozitif oran, sweet spot
+    adx_period: 14                    # Standart ADX
+    adx_threshold: 25.0               # Sweep: secici giris, dusuk DD
+    volume_filter: true               # Sweep: noise filtresi, her zaman acik
+    volume_period: 20                 # 20-bar volume SMA
+    risk_pct: 0.005                   # %0.5 risk/trade
+    allow_reversal: true              # Ters yonde girise izin ver
+    exit_on_macd_cross: true          # KRITIK: kapali → %23 basari, acik → %66
+
+# ---------- symbols & timeframe ----------
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - XRPUSDT
+  - DOGEUSDT
+  - ADAUSDT
+  - AVAXUSDT
+  - DOTUSDT
+  - LINKUSDT
+  - MATICUSDT
+  - NEARUSDT
+  - APTUSDT
+  - ARBUSDT
+  - OPUSDT
+  - SUIUSDT
+  - SEIUSDT
+  - INJUSDT
+  - TIAUSDT
+  - FTMUSDT
+  - ATOMUSDT
+  - FILUSDT
+  - RUNEUSDT
+  - WLDUSDT
+  - 1000PEPEUSDT
+  - WIFUSDT
+
+timeframe: "5m"
+name: "EMACross_MACD_Trend_15m"
+
+# ---------- position sizing ----------
+sizing:
+  mode: "margin_usd"
+  margin_usd: 10.0                    # $10 margin per trade
+  leverage: 10                        # 10x → $100 notional per trade
+  leverage_mode: "margin"
+
+# ---------- exit rules ----------
+# Strateji kendi ATR trailing stop + MACD histogram exit kullaniyor.
+# Bunlar exchange tarafi safety net.
+exit:
+  take_profit_pct: null               # Strateji kendi cikisini yapiyor
+  stop_loss_pct: null                 # ATR trailing stop yeterli
+  trailing_stop_pct: null             # Strateji icinde var (ATR-based)
+  max_holding_bars: 8                 # 96 bar x 15m = 24 saat MAX tutma suresi
+  use_exchange_orders: true
+
+# =====================================================================
+# LOCAL RISK — trade/pozisyon bazinda kontroller
+# =====================================================================
+# Bu kontroller HER YENI POZISYON acilmadan once calisir.
+# Asilirsa sadece o trade reddedilir, sistem calismaya devam eder.
+risk:
+  max_position_size: 100000.0         # Tek pozisyonda max coin adedi
+  max_position_notional: 500.0        # Tek pozisyon max notional ($500)
+  max_daily_loss: 30.0                # Gunluk max kayip ($30)
+  max_daily_loss_pct: 0.10            # Gunluk max kayip (%10)
+  max_drawdown: 0.20                  # %20 drawdown → yeni trade acma
+  max_leverage: 20.0                  # Max izin verilen leverage
+  max_concurrent_positions: 2         # Ayni anda MAX 2 pozisyon
+
+# =====================================================================
+# GLOBAL RISK — hesap seviyesinde koruma (TUM islemleri durdurur)
+# =====================================================================
+# Bu kontroller HER BAR'da calisir. Asilirsa:
+# - Yeni sinyal uretilmez
+# - Kill switch aktif olursa Telegram bildirimi gider
+# - Mevcut pozisyonlarin exit check'i devam eder
+# - State JSON'a kaydedilir (restart'ta korunur)
+global_risk:
+  max_account_drawdown_pct: 0.10      # %10 hesap drawdown → KILL SWITCH
+                                      # (backtestte max DD %1.25 idi, genis marj)
+  max_total_exposure_usd: 500.0       # 2 pozisyon x $100 notional + guvenlik payi
+  max_correlated_positions: 2         # Max 2 eszamanli pozisyon
+  persist_path: "logs/live_risk_state_emacross.json"
+
+# ---------- execution ----------
+execution:
+  margin_type: "ISOLATED"
+  preload_bars: 250                   # EMA icin yeterli (slow_ema=21 + macd warm-up)
+  preload_batch: 10
+
+# ---------- news sentiment ----------
+news:
+  enabled: false
+
+# ---------- per-symbol overrides ----------
+# BTC ve ETH daha az volatil → daha dar stop
+# Meme coinler daha volatil → daha genis stop, dusuk leverage
+symbol_routes:
+  - symbol: BTCUSDT
+    leverage: 10
+
+  - symbol: ETHUSDT
+    leverage: 10
+
+  - symbol: 1000PEPEUSDT
+    leverage: 5                       # Meme coin → dusuk leverage
+    margin_usd: 5.0                   # Daha az margin
+
+  - symbol: WIFUSDT
+    leverage: 5
+    margin_usd: 5.0
+
+  - symbol: DOGEUSDT
+    leverage: 8
+
+# ---------- rate limiting ----------
+rate_limit:
+  requests_per_minute: 1000
+  exchange_info_ttl_sec: 300
+
+# ---------- API ----------
+api:
+  testnet: false

@@ -39,6 +39,7 @@ log = setup_logger("LiveRunner")
 STRATEGY_MAP = {
     "RSIThreshold": "Strategy.RSIThreshold",
     "DonchianATRVolTarget": "Strategy.DonchianATRVolTarget",
+    "EMACrossMACDTrend": "Strategy.EMACrossMACDTrend",
 }
 
 

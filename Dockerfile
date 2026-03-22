@@ -16,4 +16,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["python", "live_runner.py","--config","live_config.yaml"]
+CMD ["python", "live_runner.py","--config","live_config_emacross.yaml"]

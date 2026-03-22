@@ -30,7 +30,7 @@ from Backtest.scoring.scorer import Scorer, ScorerWeights
 from Interfaces.metrics_interface import BacktestResult
 from Interfaces.strategy_adapter import SizingConfig, SizingMode
 
-from Strategy.DonchianATRVolTarget import Strategy as DonchianStrategy
+from Strategy.RSIThreshold import Strategy as RSIThresholdStrategy
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -41,27 +41,32 @@ log.setLevel(logging.INFO)
 
 
 # ── Configuration ─────────────────────────────────────────────────────
-SYMBOL = "DOGEUSDT"
-TIMEFRAME = "15m"
+SYMBOL = "AVAXUSDT"
+TIMEFRAME = "5m"
 DATA_DIR = "./data/ticks"
 INITIAL_CAPITAL = 10_000.0
 LEVERAGE = 10
 MARGIN_USD = 10.0
 
 # ── Parameter Grid ────────────────────────────────────────────────────
-# atr_mult: strategy's own ATR trailing stop
+# rsi_period: RSI lookback period
+# rsi_overbought / rsi_oversold: RSI threshold levels
 # tp_pct / sl_pct: engine-level ExitManager (margin-return %)
-# None = disabled (strategy handles exit alone)
+# None = disabled
 PARAM_GRID = {
-    "atr_mult": [1.5, 2.0, 2.5, 3.0],
-    "tp_pct": [None, 0.02, 0.04, 0.06, 0.08],
-    "sl_pct": [None, 0.01, 0.02, 0.03, 0.04],
+    "rsi_period": [7, 14, 21],
+    "rsi_overbought": [70, 75, 80],
+    "rsi_oversold": [20,25,30],
+    "tp_pct": [ 0.02, 0.04, 0.06],
+    "sl_pct": [ 0.01, 0.02, 0.03],
 }
 
 
 def run_single(params: dict) -> BacktestResult:
     """Run a single backtest with given params."""
-    atr_mult = params["atr_mult"]
+    rsi_period = params["rsi_period"]
+    rsi_ob = params["rsi_overbought"]
+    rsi_os = params["rsi_oversold"]
     tp_pct = params.get("tp_pct")
     sl_pct = params.get("sl_pct")
 
@@ -105,14 +110,10 @@ def run_single(params: dict) -> BacktestResult:
         leverage_mode="margin",
     )
 
-    strategy = DonchianStrategy(
-        dc_period=15,
-        atr_period=14,
-        atr_mult=atr_mult,
-        risk_pct=0.003,
-        filter_type="ema",
-        ema_period=200,
-        allow_reversal=True,
+    strategy = RSIThresholdStrategy(
+        rsi_period=rsi_period,
+        rsi_overbought=rsi_ob,
+        rsi_oversold=rsi_os,
     )
 
     result = engine.run(strategy, sizing_config=sizing)
@@ -126,11 +127,13 @@ def main():
     total = len(all_combos)
 
     log.info("=" * 70)
-    log.info("TP/SL + ATR MULTIPLIER PARAMETER SWEEP")
+    log.info("RSI THRESHOLD + TP/SL PARAMETER SWEEP")
     log.info("=" * 70)
     log.info(f"Symbol: {SYMBOL} | TF: {TIMEFRAME} | Leverage: {LEVERAGE}x")
     log.info(f"Total combinations: {total}")
-    log.info(f"Grid: atr_mult={PARAM_GRID['atr_mult']}")
+    log.info(f"Grid: rsi_period={PARAM_GRID['rsi_period']}")
+    log.info(f"      rsi_overbought={PARAM_GRID['rsi_overbought']}")
+    log.info(f"      rsi_oversold={PARAM_GRID['rsi_oversold']}")
     log.info(f"      tp_pct={PARAM_GRID['tp_pct']}")
     log.info(f"      sl_pct={PARAM_GRID['sl_pct']}")
     log.info("=" * 70)
@@ -149,9 +152,10 @@ def main():
             sl_str = f"{params['sl_pct']*100:.0f}%" if params['sl_pct'] else "OFF"
 
             log.info(
-                "[%3d/%d] atr=%.1f tp=%-4s sl=%-4s | ret=%+6.1f%% sharpe=%.2f dd=%.1f%% trades=%d wr=%.0f%% | score=%.3f",
+                "[%3d/%d] rsi(%d,%d/%d) tp=%-4s sl=%-4s | ret=%+6.1f%% sharpe=%.2f dd=%.1f%% trades=%d wr=%.0f%% | score=%.3f",
                 i + 1, total,
-                params["atr_mult"], tp_str, sl_str,
+                params["rsi_period"], params["rsi_oversold"], params["rsi_overbought"],
+                tp_str, sl_str,
                 result.total_return_pct,
                 result.sharpe_ratio,
                 result.max_drawdown * 100,
@@ -171,14 +175,14 @@ def main():
     print("\n" + "=" * 90)
     print("TOP 10 PARAMETER COMBINATIONS")
     print("=" * 90)
-    print(f"{'Rank':<5} {'ATR':>5} {'TP':>6} {'SL':>6} | {'Return':>8} {'Sharpe':>7} {'MaxDD':>7} {'Trades':>7} {'WinR':>6} {'PF':>6} | {'Score':>7}")
-    print("-" * 90)
+    print(f"{'Rank':<5} {'RSI':>4} {'OB':>4} {'OS':>4} {'TP':>6} {'SL':>6} | {'Return':>8} {'Sharpe':>7} {'MaxDD':>7} {'Trades':>7} {'WinR':>6} {'PF':>6} | {'Score':>7}")
+    print("-" * 100)
 
     for rank, (params, result, score) in enumerate(results[:10], 1):
         tp_str = f"{params['tp_pct']*100:.0f}%" if params['tp_pct'] else "OFF"
         sl_str = f"{params['sl_pct']*100:.0f}%" if params['sl_pct'] else "OFF"
         print(
-            f"{rank:<5} {params['atr_mult']:>5.1f} {tp_str:>6} {sl_str:>6} | "
+            f"{rank:<5} {params['rsi_period']:>4} {params['rsi_overbought']:>4} {params['rsi_oversold']:>4} {tp_str:>6} {sl_str:>6} | "
             f"{result.total_return_pct:>+7.1f}% {result.sharpe_ratio:>7.2f} "
             f"{result.max_drawdown*100:>6.1f}% {result.total_trades:>7} "
             f"{result.win_rate*100:>5.0f}% {result.profit_factor:>6.2f} | "
@@ -191,7 +195,9 @@ def main():
         print("\n" + "=" * 90)
         print("BEST PARAMETERS")
         print("=" * 90)
-        print(f"  atr_mult:       {best_params['atr_mult']}")
+        print(f"  rsi_period:     {best_params['rsi_period']}")
+        print(f"  rsi_overbought: {best_params['rsi_overbought']}")
+        print(f"  rsi_oversold:   {best_params['rsi_oversold']}")
         print(f"  tp_pct:         {best_params['tp_pct'] or 'None (disabled)'}")
         print(f"  sl_pct:         {best_params['sl_pct'] or 'None (disabled)'}")
         print(f"  ---")
@@ -204,21 +210,23 @@ def main():
         print(f"  Score:          {best_score:.4f}")
 
         # Live config recommendation
-        print("\n" + "-" * 90)
+        print("\n" + "-" * 100)
         print("LIVE CONFIG RECOMMENDATION (live_config.yaml)")
-        print("-" * 90)
-        print(f"  strategy.params.atr_mult: {best_params['atr_mult']}")
+        print("-" * 100)
+        print(f"  strategy.params.rsi_period: {best_params['rsi_period']}")
+        print(f"  strategy.params.rsi_overbought: {best_params['rsi_overbought']}")
+        print(f"  strategy.params.rsi_oversold: {best_params['rsi_oversold']}")
         if best_params['tp_pct']:
             print(f"  exit.take_profit_pct: {best_params['tp_pct']}")
         else:
-            print(f"  exit.take_profit_pct: null  # stratejinin ATR trailing stop'u yeterli")
+            print(f"  exit.take_profit_pct: null")
         if best_params['sl_pct']:
             print(f"  exit.stop_loss_pct: {best_params['sl_pct']}")
         else:
-            print(f"  exit.stop_loss_pct: null  # stratejinin ATR trailing stop'u yeterli")
+            print(f"  exit.stop_loss_pct: null")
 
     print(f"\nTotal time: {elapsed:.1f}s ({elapsed/total:.1f}s per run)")
-    print("=" * 90)
+    print("=" * 100)
 
 
 if __name__ == "__main__":
