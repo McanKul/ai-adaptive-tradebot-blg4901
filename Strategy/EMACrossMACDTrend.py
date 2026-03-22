@@ -103,19 +103,29 @@ class Strategy(IStrategy):
         self.exit_on_macd_cross = exit_on_macd_cross
         self.max_holding_bars = max_holding_bars
 
-        # Internal state
-        self._entry_bar_index: int = 0
-        self._entry_price: float = 0.0
-        self._highest_since_entry: float = -math.inf
-        self._lowest_since_entry: float = math.inf
-        self._bar_count: int = 0
-        self._prev_histogram: float = 0.0
+        # Internal state — per-symbol to support multi-coin live trading
+        self._state: Dict[str, Dict[str, Any]] = {}
+
+    def _get_state(self, symbol: str) -> Dict[str, Any]:
+        """Get or create per-symbol state."""
+        if symbol not in self._state:
+            self._state[symbol] = {
+                "entry_bar_index": 0,
+                "entry_price": 0.0,
+                "highest_since_entry": -math.inf,
+                "lowest_since_entry": math.inf,
+                "bar_count": 0,
+                "prev_histogram": 0.0,
+            }
+        return self._state[symbol]
 
     # ------------------------------------------------------------------
     # IStrategy interface
     # ------------------------------------------------------------------
     def on_bar(self, bar: Bar, ctx: Any) -> StrategyDecision:  # noqa: C901
-        self._bar_count += 1
+        sym = bar.symbol
+        st = self._get_state(sym)
+        st["bar_count"] += 1
         ohlcv = ctx.get_ohlcv()
         if ohlcv is None:
             return StrategyDecision.no_action()
@@ -188,21 +198,21 @@ class Strategy(IStrategy):
 
         # ---- trailing stop for open position ----
         if position > 1e-10:
-            self._highest_since_entry = max(self._highest_since_entry, float(bar.high))
-            stop_price = self._highest_since_entry - self.atr_mult * atr
+            st["highest_since_entry"] = max(st["highest_since_entry"], float(bar.high))
+            stop_price = st["highest_since_entry"] - self.atr_mult * atr
             features["stop_price"] = stop_price
             if bar.low <= stop_price:
                 orders.append(self._exit_order(bar, position))
-                self._prev_histogram = curr_histogram
+                st["prev_histogram"] = curr_histogram
                 return self._decision(orders, features,
                                       {"exit_reason": "trailing_stop_long"})
         elif position < -1e-10:
-            self._lowest_since_entry = min(self._lowest_since_entry, float(bar.low))
-            stop_price = self._lowest_since_entry + self.atr_mult * atr
+            st["lowest_since_entry"] = min(st["lowest_since_entry"], float(bar.low))
+            stop_price = st["lowest_since_entry"] + self.atr_mult * atr
             features["stop_price"] = stop_price
             if bar.high >= stop_price:
                 orders.append(self._exit_order(bar, position))
-                self._prev_histogram = curr_histogram
+                st["prev_histogram"] = curr_histogram
                 return self._decision(orders, features,
                                       {"exit_reason": "trailing_stop_short"})
 
@@ -210,21 +220,21 @@ class Strategy(IStrategy):
         if self.exit_on_macd_cross and abs(position) > 1e-10:
             if position > 1e-10 and curr_histogram < 0 and prev_histogram >= 0:
                 orders.append(self._exit_order(bar, position))
-                self._prev_histogram = curr_histogram
+                st["prev_histogram"] = curr_histogram
                 return self._decision(orders, features,
                                       {"exit_reason": "macd_cross_exit_long"})
             if position < -1e-10 and curr_histogram > 0 and prev_histogram <= 0:
                 orders.append(self._exit_order(bar, position))
-                self._prev_histogram = curr_histogram
+                st["prev_histogram"] = curr_histogram
                 return self._decision(orders, features,
                                       {"exit_reason": "macd_cross_exit_short"})
 
         # ---- time stop ----
         if self.max_holding_bars is not None and abs(position) > 1e-10:
-            bars_held = self._bar_count - self._entry_bar_index
+            bars_held = st["bar_count"] - st["entry_bar_index"]
             if bars_held >= self.max_holding_bars:
                 orders.append(self._exit_order(bar, position))
-                self._prev_histogram = curr_histogram
+                st["prev_histogram"] = curr_histogram
                 return self._decision(orders, features,
                                       {"exit_reason": "time_stop"})
 
@@ -259,8 +269,8 @@ class Strategy(IStrategy):
                     "qty_method": "vol_target",
                 },
             ))
-            self._register_entry(close)
-            self._prev_histogram = curr_histogram
+            self._register_entry(st, close)
+            st["prev_histogram"] = curr_histogram
             return self._decision(orders, features, {"entry_side": "long"})
 
         if short_ok and position >= -1e-10:
@@ -283,29 +293,24 @@ class Strategy(IStrategy):
                     "qty_method": "vol_target",
                 },
             ))
-            self._register_entry(close)
-            self._prev_histogram = curr_histogram
+            self._register_entry(st, close)
+            st["prev_histogram"] = curr_histogram
             return self._decision(orders, features, {"entry_side": "short"})
 
-        self._prev_histogram = curr_histogram
+        st["prev_histogram"] = curr_histogram
         return self._decision([], features, {})
 
     def reset(self) -> None:
-        self._entry_bar_index = 0
-        self._entry_price = 0.0
-        self._highest_since_entry = -math.inf
-        self._lowest_since_entry = math.inf
-        self._bar_count = 0
-        self._prev_histogram = 0.0
+        self._state.clear()
 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
-    def _register_entry(self, price: float) -> None:
-        self._entry_bar_index = self._bar_count
-        self._entry_price = price
-        self._highest_since_entry = price
-        self._lowest_since_entry = price
+    def _register_entry(self, st: Dict[str, Any], price: float) -> None:
+        st["entry_bar_index"] = st["bar_count"]
+        st["entry_price"] = price
+        st["highest_since_entry"] = price
+        st["lowest_since_entry"] = price
 
     @staticmethod
     def _exit_order(bar: Bar, signed_position: float) -> Order:
