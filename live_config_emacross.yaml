@@ -70,8 +70,8 @@ name: "EMACross_MACD_Trend_15m"
 # ---------- position sizing ----------
 sizing:
   mode: "margin_usd"
-  margin_usd: 5.0                     # $5 margin per trade ($21 bakiye icin uygun)
-  leverage: 10                        # 10x → $50 notional per trade
+  margin_usd: 10.0                     # $10 margin per trade ($21 bakiye icin uygun)
+  leverage: 10                        # 10x → $100 notional per trade
   leverage_mode: "margin"
 
 # ---------- exit rules ----------
@@ -129,7 +129,7 @@ news:
 symbol_routes:
   - symbol: 1000PEPEUSDT
     leverage: 5                       # Meme coin → dusuk leverage
-    margin_usd: 3.0                   # Daha az margin
+    margin_usd: 5.0                   # Daha az margin
 
   - symbol: WIFUSDT
     leverage: 5
@@ -137,7 +137,7 @@ symbol_routes:
 
   - symbol: DOGEUSDT
     leverage: 8
-
+    margin_usd: 5.0
 # ---------- rate limiting ----------
 rate_limit:
   requests_per_minute: 1000
