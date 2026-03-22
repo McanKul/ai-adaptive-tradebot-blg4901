@@ -70,8 +70,8 @@ name: "EMACross_MACD_Trend_15m"
 # ---------- position sizing ----------
 sizing:
   mode: "margin_usd"
-  margin_usd: 5.0                     # $5 margin per trade ($21 bakiye icin uygun)
-  leverage: 10                        # 10x → $50 notional per trade
+  margin_usd: 10.0                     # $10 margin per trade ($21 bakiye icin uygun)
+  leverage: 10                        # 10x → $100 notional per trade
   leverage_mode: "margin"
 
 # ---------- exit rules ----------
