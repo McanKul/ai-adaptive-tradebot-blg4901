@@ -601,11 +601,13 @@ class LiveSupervisor:
     each symbol's position state, sizing, and exit rules.
     """
 
-    def __init__(self, broker: IBroker, persist_path: str = "logs/live_positions.json"):
+    def __init__(self, broker: IBroker, persist_path: str = "logs/live_positions.json",
+                 max_global_positions: int = 2):
         self.broker = broker
         self._managers: Dict[str, PositionManager] = {}
         self.history: List[Position] = []
         self._store = PositionStore(path=persist_path)
+        self._max_global_positions = max_global_positions
 
     def register_symbol(
         self,
@@ -698,6 +700,13 @@ class LiveSupervisor:
         timeframe: str,
         levels=None,
     ) -> bool:
+        # Global concurrent position limit — hard gate before any exchange call
+        total_open = sum(len(pm.open_positions) for pm in self._managers.values())
+        if total_open >= self._max_global_positions:
+            log.info("%s blocked: global position limit (%d/%d)",
+                     symbol, total_open, self._max_global_positions)
+            return False
+
         pm = self._managers.get(symbol)
         if pm is None:
             log.warning("No manager registered for %s", symbol)
