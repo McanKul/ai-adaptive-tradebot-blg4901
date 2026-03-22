@@ -271,11 +271,21 @@ class LiveEngine:
                         total_exposure_usd=total_exposure,
                         open_position_count=open_count,
                     )
-                    if not risk_ok:
-                        log.warning("Global risk block: %s — skipping signals", risk_reason)
-                        await self.notifier.kill_switch(risk_reason)
-                        await self.supervisor.update_all()
+                    # If risk blocked AND this symbol has no open position → skip entirely
+                    # If risk blocked BUT this symbol HAS a position → let strategy run for exits only
+                    has_open_pos = self.supervisor.position_qty(sym) != 0.0
+                    if not risk_ok and not has_open_pos:
+                        if not getattr(self, '_risk_block_logged', False):
+                            log.warning("Global risk block: %s — skipping new entries", risk_reason)
+                            self._risk_block_logged = True
+                        if "correlated" not in risk_reason:
+                            await self.notifier.kill_switch(risk_reason)
+                        await self.supervisor.update_symbol(sym)
                         continue
+                    # Flag: block new entries but allow exits
+                    risk_block_entries = not risk_ok
+                    if risk_ok:
+                        self._risk_block_logged = False
                 except Exception as e:
                     log.warning("Global risk check error: %s", e)
 
@@ -354,7 +364,7 @@ class LiveEngine:
                 # ── Combine with Sentiment ─────────────────────────────
                 final_sig = await self._get_combined_signal(sym, strategy_sig)
 
-                if final_sig:
+                if final_sig and not risk_block_entries:
                     leverage = self.cfg.leverage_for(sym)
 
                     log.info(
