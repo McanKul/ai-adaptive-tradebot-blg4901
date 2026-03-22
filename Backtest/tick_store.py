@@ -387,6 +387,8 @@ class TickStore:
         # If timestamp looks like milliseconds (13 digits), convert to ns
         if ts < 1e15:  # Less than year 2001 in ns
             ts = ts * 1_000_000  # Convert ms to ns
+        elif ts > 1e21:  # Looks like picoseconds (22+ digits), convert to ns
+            ts = ts // 1_000
         
         # Symbol
         sym = get_col('symbol', default_symbol) or default_symbol

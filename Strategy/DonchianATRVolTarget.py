@@ -150,7 +150,7 @@ class Strategy(IStrategy):
             stop_price = self._highest_since_entry - self.atr_mult * atr
             features["stop_price"] = stop_price
             if bar.low <= stop_price:
-                orders.append(self._exit_order(bar, abs(position)))
+                orders.append(self._exit_order(bar, position))
                 return self._decision(orders, features, {"exit_reason": "trailing_stop_long"})
         elif position < -1e-10:
             # Short
@@ -158,21 +158,21 @@ class Strategy(IStrategy):
             stop_price = self._lowest_since_entry + self.atr_mult * atr
             features["stop_price"] = stop_price
             if bar.high >= stop_price:
-                orders.append(self._exit_order(bar, abs(position)))
+                orders.append(self._exit_order(bar, position))
                 return self._decision(orders, features, {"exit_reason": "trailing_stop_short"})
 
         # ---- time stop ----
         if self.max_holding_bars is not None and abs(position) > 1e-10:
             bars_held = self._bar_count - self._entry_bar_index
             if bars_held >= self.max_holding_bars:
-                orders.append(self._exit_order(bar, abs(position)))
+                orders.append(self._exit_order(bar, position))
                 return self._decision(orders, features, {"exit_reason": "time_stop"})
 
         # ---- entry signals ----
         if close > upper and filter_pass_long and position <= 1e-10:
             # Breakout long
             if position < -1e-10 and self.allow_reversal:
-                orders.append(self._exit_order(bar, abs(position)))
+                orders.append(self._exit_order(bar, position))
             orders.append(Order(
                 symbol=bar.symbol,
                 side=OrderSide.BUY,
@@ -190,7 +190,7 @@ class Strategy(IStrategy):
         if close < lower and filter_pass_short and position >= -1e-10:
             # Breakout short
             if position > 1e-10 and self.allow_reversal:
-                orders.append(self._exit_order(bar, abs(position)))
+                orders.append(self._exit_order(bar, position))
             orders.append(Order(
                 symbol=bar.symbol,
                 side=OrderSide.SELL,
@@ -224,13 +224,15 @@ class Strategy(IStrategy):
         self._lowest_since_entry = price
 
     @staticmethod
-    def _exit_order(bar: Bar, qty: float) -> Order:
-        side = OrderSide.SELL if qty > 0 else OrderSide.BUY
+    def _exit_order(bar: Bar, signed_position: float) -> Order:
+        """Create exit order. Pass SIGNED position (+ for long, - for short)."""
+        # Long position → SELL to close; Short position → BUY to close
+        side = OrderSide.SELL if signed_position > 0 else OrderSide.BUY
         return Order(
             symbol=bar.symbol,
             side=side,
             order_type=OrderType.MARKET,
-            quantity=abs(qty),
+            quantity=abs(signed_position),
             timestamp_ns=bar.timestamp_ns,
             strategy_id="DONCHIAN_EXIT",
             reduce_only=True,
