@@ -127,6 +127,7 @@ class TestEMACrossLongEntry(unittest.TestCase):
             fast_ema_period=5, slow_ema_period=12, macd_signal=5,
             atr_period=5, adx_period=5, adx_threshold=15.0,
             volume_filter=True, volume_period=10,
+            use_rsi_filter=False, use_ema_slope=False,
         )
         ohlcv = make_uptrend(n=60, slope=0.8)
         bar = make_bar("AVAXUSDT", ohlcv)
@@ -183,6 +184,7 @@ class TestEMACrossShortEntry(unittest.TestCase):
             fast_ema_period=5, slow_ema_period=12, macd_signal=5,
             atr_period=5, adx_period=5, adx_threshold=15.0,
             volume_filter=True, volume_period=10,
+            use_rsi_filter=False, use_ema_slope=False,
         )
         ohlcv = make_downtrend(n=60, slope=0.8)
 
@@ -476,6 +478,7 @@ class TestEMACrossPerSymbolState(unittest.TestCase):
             fast_ema_period=5, slow_ema_period=12, macd_signal=5,
             atr_period=5, adx_period=5, adx_threshold=10.0,
             volume_filter=False,
+            use_rsi_filter=False, use_ema_slope=False,
         )
         up = make_uptrend(n=60, slope=0.8)
         down = make_downtrend(n=60, slope=0.8)
@@ -715,6 +718,146 @@ class TestEMACrossIndicators(unittest.TestCase):
         lows = closes - 1
         adx = EMACrossStrategy._compute_adx(highs, lows, closes, 14)
         self.assertIsNone(adx)
+
+
+class TestEMACrossRSIFilter(unittest.TestCase):
+    """Test RSI filter functionality."""
+
+    def test_rsi_computation(self):
+        """RSI should be between 0 and 100."""
+        closes = np.array([100 + i * 0.5 for i in range(20)], dtype=float)
+        rsi = EMACrossStrategy._compute_rsi(closes, 14)
+        self.assertGreater(rsi, 0)
+        self.assertLessEqual(rsi, 100)
+
+    def test_rsi_high_for_uptrend(self):
+        """RSI should be high (>50) for strong uptrend."""
+        closes = np.array([100 + i * 2 for i in range(20)], dtype=float)
+        rsi = EMACrossStrategy._compute_rsi(closes, 14)
+        self.assertGreater(rsi, 50)
+
+    def test_rsi_low_for_downtrend(self):
+        """RSI should be low (<50) for strong downtrend."""
+        closes = np.array([200 - i * 2 for i in range(20)], dtype=float)
+        rsi = EMACrossStrategy._compute_rsi(closes, 14)
+        self.assertLess(rsi, 50)
+
+    def test_rsi_100_for_all_gains(self):
+        """RSI should be 100 if all periods are gains."""
+        closes = np.array([100 + i for i in range(20)], dtype=float)
+        rsi = EMACrossStrategy._compute_rsi(closes, 14)
+        self.assertEqual(rsi, 100.0)
+
+    def test_rsi_filter_blocks_overbought_long(self):
+        """RSI filter should block LONG when RSI > overbought threshold."""
+        strategy = EMACrossStrategy(
+            fast_ema_period=5, slow_ema_period=12, macd_signal=5,
+            atr_period=5, adx_period=5, adx_threshold=15.0,
+            volume_filter=False, use_ema_slope=False,
+            use_rsi_filter=True, rsi_overbought=50.0,  # Very tight threshold
+        )
+        ohlcv = make_uptrend(n=60, slope=0.8)
+        # A strong uptrend will have RSI > 50, so the filter should block entries
+        signal_found = False
+        for i in range(40, 60):
+            partial = {k: v[:i+1] for k, v in ohlcv.items()}
+            bar = make_bar("AVAXUSDT", partial)
+            ctx = MockCtx("AVAXUSDT", partial, position=0.0)
+            decision = strategy.on_bar(bar, ctx)
+            if decision.metadata.get("entry_side") == "long":
+                signal_found = True
+                break
+
+        # With RSI threshold at 50, a strong uptrend should be blocked
+        self.assertFalse(signal_found,
+                         "RSI filter at 50 should block LONG on strong uptrend")
+
+    def test_rsi_filter_disabled(self):
+        """With use_rsi_filter=False, RSI should not block entries."""
+        strategy = EMACrossStrategy(
+            fast_ema_period=5, slow_ema_period=12, macd_signal=5,
+            atr_period=5, adx_period=5, adx_threshold=15.0,
+            volume_filter=False, use_ema_slope=False,
+            use_rsi_filter=False,
+        )
+        ohlcv = make_uptrend(n=60, slope=0.8)
+        signal_found = False
+        for i in range(40, 60):
+            partial = {k: v[:i+1] for k, v in ohlcv.items()}
+            bar = make_bar("AVAXUSDT", partial)
+            ctx = MockCtx("AVAXUSDT", partial, position=0.0)
+            decision = strategy.on_bar(bar, ctx)
+            if decision.metadata.get("entry_side") == "long":
+                signal_found = True
+                break
+        self.assertTrue(signal_found,
+                        "With RSI filter OFF, uptrend should produce LONG")
+
+
+class TestEMACrossEMASlope(unittest.TestCase):
+    """Test EMA slope confirmation."""
+
+    def test_ema_slope_enabled_vs_disabled(self):
+        """EMA slope filter should be more selective than without it."""
+        params = dict(
+            fast_ema_period=5, slow_ema_period=12, macd_signal=5,
+            atr_period=5, adx_period=5, adx_threshold=15.0,
+            volume_filter=False, use_rsi_filter=False,
+        )
+        s_with = EMACrossStrategy(**params, use_ema_slope=True)
+        s_without = EMACrossStrategy(**params, use_ema_slope=False)
+
+        ohlcv = make_uptrend(n=60, slope=0.8)
+        signals_with = 0
+        signals_without = 0
+        for i in range(30, 60):
+            partial = {k: v[:i+1] for k, v in ohlcv.items()}
+            bar = make_bar("TEST", partial)
+
+            d1 = s_with.on_bar(bar, MockCtx("TEST", partial, position=0.0))
+            d2 = s_without.on_bar(bar, MockCtx("TEST", partial, position=0.0))
+            if d1.metadata.get("entry_side"):
+                signals_with += 1
+            if d2.metadata.get("entry_side"):
+                signals_without += 1
+
+        # Slope filter should be at least as selective (fewer or equal signals)
+        self.assertLessEqual(signals_with, signals_without,
+                             "EMA slope filter should not produce MORE signals")
+
+
+class TestEMACrossMinHistogram(unittest.TestCase):
+    """Test minimum histogram threshold."""
+
+    def test_histogram_threshold_parameter(self):
+        """Strategy should accept min_histogram_pct parameter."""
+        strategy = EMACrossStrategy(min_histogram_pct=0.1)
+        self.assertEqual(strategy.min_histogram_pct, 0.1)
+
+    def test_zero_threshold_backward_compatible(self):
+        """min_histogram_pct=0.0 should not change behavior vs default."""
+        s1 = EMACrossStrategy(
+            fast_ema_period=5, slow_ema_period=12, macd_signal=5,
+            atr_period=5, adx_period=5, adx_threshold=15.0,
+            volume_filter=False, use_rsi_filter=False, use_ema_slope=False,
+            min_histogram_pct=0.0,
+        )
+        s2 = EMACrossStrategy(
+            fast_ema_period=5, slow_ema_period=12, macd_signal=5,
+            atr_period=5, adx_period=5, adx_threshold=15.0,
+            volume_filter=False, use_rsi_filter=False, use_ema_slope=False,
+        )
+        ohlcv = make_uptrend(n=60, slope=0.8)
+        bar = make_bar("TEST", ohlcv)
+        ctx1 = MockCtx("TEST", ohlcv, position=0.0)
+        ctx2 = MockCtx("TEST", ohlcv, position=0.0)
+
+        d1 = s1.on_bar(bar, ctx1)
+        d2 = s2.on_bar(bar, ctx2)
+
+        self.assertEqual(d1.metadata.get("entry_side"),
+                         d2.metadata.get("entry_side"),
+                         "min_histogram_pct=0.0 should match default")
 
 
 if __name__ == '__main__':
