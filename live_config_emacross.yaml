@@ -71,7 +71,7 @@ symbols:
   - 1000PEPEUSDT
   - WIFUSDT
 
-timeframe: "5m"
+timeframe: "15m"
 name: "EMACross_MACD_Trend_15m"
 
 # ---------- position sizing ----------
