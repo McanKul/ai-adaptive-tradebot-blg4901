@@ -85,6 +85,15 @@ class Strategy(IStrategy):
         allow_reversal: bool = True,
         exit_on_macd_cross: bool = True,
         max_holding_bars: Optional[int] = None,
+        # RSI filter
+        rsi_period: int = 14,
+        rsi_overbought: float = 75.0,
+        rsi_oversold: float = 25.0,
+        use_rsi_filter: bool = True,
+        # EMA slope confirmation
+        use_ema_slope: bool = True,
+        # Minimum histogram threshold (ATR yüzdesi)
+        min_histogram_pct: float = 0.0,
         # misc
         **kw,
     ):
@@ -102,6 +111,12 @@ class Strategy(IStrategy):
         self.allow_reversal = allow_reversal
         self.exit_on_macd_cross = exit_on_macd_cross
         self.max_holding_bars = max_holding_bars
+        self.rsi_period = rsi_period
+        self.rsi_overbought = rsi_overbought
+        self.rsi_oversold = rsi_oversold
+        self.use_rsi_filter = use_rsi_filter
+        self.use_ema_slope = use_ema_slope
+        self.min_histogram_pct = min_histogram_pct
 
         # Internal state — per-symbol to support multi-coin live trading
         self._state: Dict[str, Dict[str, Any]] = {}
@@ -169,6 +184,24 @@ class Strategy(IStrategy):
             vol_sma = float(np.mean(volumes[-self.volume_period:]))
             vol_pass = float(volumes[-1]) > vol_sma
 
+        # RSI filter — overbought'ta long açma, oversold'da short açma
+        rsi_val: Optional[float] = None
+        rsi_pass_long = True
+        rsi_pass_short = True
+        if self.use_rsi_filter and len(closes) >= self.rsi_period + 1:
+            rsi_val = self._compute_rsi(closes, self.rsi_period)
+            rsi_pass_long = rsi_val < self.rsi_overbought
+            rsi_pass_short = rsi_val > self.rsi_oversold
+
+        # EMA slope confirmation — EMA'lar aktif olarak ayrışıyor mu?
+        ema_slope_long = True
+        ema_slope_short = True
+        if self.use_ema_slope and len(fast_ema) >= 4:
+            fast_slope = float(fast_ema[-1] - fast_ema[-4])
+            slow_slope = float(slow_ema[-1] - slow_ema[-4])
+            ema_slope_long = fast_slope > 0 and slow_slope > 0
+            ema_slope_short = fast_slope < 0 and slow_slope < 0
+
         # ---- sizing ----
         # Placeholder qty — engine overrides via SizingConfig.
         # Vol-target qty stored in features for reference only.
@@ -192,6 +225,7 @@ class Strategy(IStrategy):
             "atr": atr,
             "adx": adx_val,
             "vol_sma": vol_sma,
+            "rsi": rsi_val,
             "stop_distance": stop_distance,
             "vol_target_qty": vol_target_qty,
         }
@@ -239,15 +273,22 @@ class Strategy(IStrategy):
                                       {"exit_reason": "time_stop"})
 
         # ---- entry signals ----
-        # LONG: fast EMA > slow EMA + MACD histogram > 0 & rising + ADX + volume
-        long_ema = curr_fast_ema > curr_slow_ema
-        long_macd = curr_histogram > 0 and curr_histogram > prev_histogram
-        long_ok = long_ema and long_macd and adx_pass and vol_pass
+        # Minimum histogram eşiği (ATR yüzdesi — whipsaw koruması)
+        hist_threshold = self.min_histogram_pct * atr if atr > 0 else 0.0
 
-        # SHORT: fast EMA < slow EMA + MACD histogram < 0 & falling + ADX + volume
+        # LONG: fast EMA > slow EMA + MACD histogram > threshold & rising
+        #       + ADX + volume + RSI not overbought + EMA slope up
+        long_ema = curr_fast_ema > curr_slow_ema
+        long_macd = curr_histogram > hist_threshold and curr_histogram > prev_histogram
+        long_ok = (long_ema and long_macd and adx_pass and vol_pass
+                   and rsi_pass_long and ema_slope_long)
+
+        # SHORT: fast EMA < slow EMA + MACD histogram < -threshold & falling
+        #        + ADX + volume + RSI not oversold + EMA slope down
         short_ema = curr_fast_ema < curr_slow_ema
-        short_macd = curr_histogram < 0 and curr_histogram < prev_histogram
-        short_ok = short_ema and short_macd and adx_pass and vol_pass
+        short_macd = curr_histogram < -hist_threshold and curr_histogram < prev_histogram
+        short_ok = (short_ema and short_macd and adx_pass and vol_pass
+                    and rsi_pass_short and ema_slope_short)
 
         # Debug: log entry condition breakdown periodically
         if st["bar_count"] % 50 == 0 or long_ok or short_ok:
@@ -358,6 +399,19 @@ class Strategy(IStrategy):
         for i in range(1, len(arr)):
             out[i] = alpha * float(arr[i]) + (1.0 - alpha) * out[i - 1]
         return out
+
+    @staticmethod
+    def _compute_rsi(closes: np.ndarray, period: int) -> float:
+        """RSI (Relative Strength Index)."""
+        deltas = np.diff(closes[-(period + 1):])
+        gains = np.where(deltas > 0, deltas, 0.0)
+        losses = np.where(deltas < 0, -deltas, 0.0)
+        avg_gain = float(np.mean(gains))
+        avg_loss = float(np.mean(losses))
+        if avg_loss == 0:
+            return 100.0
+        rs = avg_gain / avg_loss
+        return 100.0 - (100.0 / (1.0 + rs))
 
     @staticmethod
     def _compute_atr(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
