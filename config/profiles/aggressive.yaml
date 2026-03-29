@@ -1,0 +1,130 @@
+# =====================================================================
+# AGGRESSIVE PROFILE — Experienced users, high conviction
+# =====================================================================
+# Use this when:
+#   - You have extensive live trading history with this strategy
+#   - You understand the drawdown risk and accept it
+#   - You want maximum capital efficiency
+#
+# WARNING: Higher leverage amplifies both gains AND losses.
+#   At 15x, a 7% adverse move wipes out your margin.
+#   Only use after prolonged success with the standard profile.
+#
+# Characteristics:
+#   - 15x leverage, $25 margin ($375 notional)
+#   - Up to 3 concurrent positions
+#   - $75 daily loss limit
+#   - 15% account drawdown kill switch
+#
+# Usage:
+#   python live_runner.py --config config/profiles/aggressive.yaml
+# =====================================================================
+
+strategy:
+  class: "EMACrossMACDTrend"
+  params:
+    fast_ema_period: 12
+    slow_ema_period: 21
+    macd_signal: 9
+    atr_period: 14
+    atr_mult: 2.5
+    adx_period: 14
+    adx_threshold: 25.0
+    volume_filter: true
+    volume_period: 20
+    risk_pct: 0.005
+    allow_reversal: true
+    exit_on_macd_cross: true
+    rsi_period: 14
+    rsi_overbought: 75.0
+    rsi_oversold: 25.0
+    use_rsi_filter: true
+    use_ema_slope: true
+    min_histogram_pct: 0.0
+
+symbols:
+  - SOLUSDT
+  - XRPUSDT
+  - DOGEUSDT
+  - ADAUSDT
+  - AVAXUSDT
+  - DOTUSDT
+  - LINKUSDT
+  - POLUSDT
+  - NEARUSDT
+  - APTUSDT
+  - ARBUSDT
+  - OPUSDT
+  - SUIUSDT
+  - SEIUSDT
+  - INJUSDT
+  - TIAUSDT
+  - FTMUSDT
+  - ATOMUSDT
+  - FILUSDT
+  - RUNEUSDT
+  - WLDUSDT
+  - 1000PEPEUSDT
+  - WIFUSDT
+
+timeframe: "15m"
+name: "EMACross_Aggressive"
+
+sizing:
+  mode: "margin_usd"
+  margin_usd: 25.0              # $25 margin → $375 notional
+  leverage: 15
+  leverage_mode: "margin"
+
+exit:
+  take_profit_pct: 1.20         # 120% of margin = 8% price move at 15x
+  stop_loss_pct: 0.50           # 50% of margin = 3.3% price move at 15x ($12.50 max loss)
+  trailing_stop_pct: null
+  max_holding_bars: 96
+  use_exchange_orders: true
+
+risk:
+  max_position_size: 100000.0
+  max_position_notional: 500.0
+  max_daily_loss: 75.0
+  max_daily_loss_pct: 0.15
+  max_drawdown: 0.25
+  max_leverage: 20.0
+  max_concurrent_positions: 3
+
+global_risk:
+  max_account_drawdown_pct: 0.15
+  max_total_exposure_usd: 1500.0
+  max_correlated_positions: 3
+  persist_path: "logs/live_risk_state.json"
+
+execution:
+  margin_type: "ISOLATED"
+  preload_bars: 250
+  preload_batch: 10
+
+news:
+  enabled: false
+
+symbol_routes:
+  - symbol: 1000PEPEUSDT
+    leverage: 8
+    margin_usd: 10.0
+    stop_loss_pct: 0.40
+
+  - symbol: WIFUSDT
+    leverage: 8
+    margin_usd: 10.0
+    stop_loss_pct: 0.40
+
+  - symbol: DOGEUSDT
+    leverage: 10
+    margin_usd: 15.0
+    stop_loss_pct: 0.40
+
+rate_limit:
+  requests_per_minute: 1000
+  exchange_info_ttl_sec: 300
+
+api:
+  testnet: false

@@ -1,0 +1,93 @@
+# =====================================================================
+# SAFE PROFILE — First deployment / learning / dry-run
+# =====================================================================
+# Use this when:
+#   - You are running live for the first time
+#   - You want to validate signals with minimal risk
+#   - You are testing a new coin or parameter set
+#
+# Characteristics:
+#   - Low leverage (5x), tiny margin ($5)
+#   - Single position at a time
+#   - Tight daily loss limit ($10)
+#   - Conservative kill switch (8% account drawdown)
+#
+# Usage:
+#   python live_runner.py --config config/profiles/safe.yaml --dry-run
+#   python live_runner.py --config config/profiles/safe.yaml
+# =====================================================================
+
+strategy:
+  class: "EMACrossMACDTrend"
+  params:
+    fast_ema_period: 12
+    slow_ema_period: 21
+    macd_signal: 9
+    atr_period: 14
+    atr_mult: 2.5
+    adx_period: 14
+    adx_threshold: 25.0
+    volume_filter: true
+    volume_period: 20
+    risk_pct: 0.005
+    allow_reversal: true
+    exit_on_macd_cross: true
+    rsi_period: 14
+    rsi_overbought: 75.0
+    rsi_oversold: 25.0
+    use_rsi_filter: true
+    use_ema_slope: true
+    min_histogram_pct: 0.0
+
+symbols:
+  - SOLUSDT
+  - AVAXUSDT
+  - LINKUSDT
+
+timeframe: "15m"
+name: "EMACross_Safe"
+
+sizing:
+  mode: "margin_usd"
+  margin_usd: 5.0               # $5 margin → $25 notional
+  leverage: 5                    # Low leverage
+  leverage_mode: "margin"
+
+exit:
+  take_profit_pct: 0.80         # 80% of margin = 16% price move at 5x
+  stop_loss_pct: 0.40           # 40% of margin = 8% price move at 5x ($2 max loss)
+  trailing_stop_pct: null
+  max_holding_bars: 96
+  use_exchange_orders: true
+
+risk:
+  max_position_size: 100000.0
+  max_position_notional: 50.0   # $50 max notional per position
+  max_daily_loss: 10.0          # $10 daily loss cap
+  max_daily_loss_pct: 0.05      # 5% daily loss cap
+  max_drawdown: 0.15            # 15% drawdown → stop new trades
+  max_leverage: 10.0
+  max_concurrent_positions: 1   # Single position only
+
+global_risk:
+  max_account_drawdown_pct: 0.08  # 8% kill switch — very conservative
+  max_total_exposure_usd: 100.0
+  max_correlated_positions: 1
+  persist_path: "logs/live_risk_state.json"
+
+execution:
+  margin_type: "ISOLATED"
+  preload_bars: 250
+  preload_batch: 10
+
+news:
+  enabled: false
+
+symbol_routes: []
+
+rate_limit:
+  requests_per_minute: 1000
+  exchange_info_ttl_sec: 300
+
+api:
+  testnet: false

@@ -1,9 +1,24 @@
+"""
+main.py — DEMO / PROTOTYPE ONLY
+=================================
+This script is a minimal demo that fetches 50 klines and prints an RSI signal.
+It is NOT the production entry-point.
+
+For live trading use:
+    python live_runner.py --config live_config_emacross.yaml [--dry-run]
+
+For backtesting use:
+    python run_emacross_backtest.py
+    python run_unified_backtest.py --help
+"""
 
 import sys
 import pandas as pd
 from binance.client import Client
 from Streamer.mock_streamer import Streamer
 from Strategy.RSIThreshold import Strategy
+
+
 def main():
    try:
       client = Client()
