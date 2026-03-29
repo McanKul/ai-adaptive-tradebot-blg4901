@@ -20,6 +20,14 @@ log = logging.getLogger(__name__)
 
 
 def main():
+    import warnings
+    warnings.warn(
+        "run_emacross_backtest.py is deprecated. Use:\n"
+        "  python app.py backtest --strategy EMACrossMACDTrend --symbol AVAXUSDT "
+        '--strategy-params \'{"fast_ema_period":12,"slow_ema_period":26,...}\'\n'
+        "This script will be removed in a future version.",
+        DeprecationWarning, stacklevel=2,
+    )
     symbol = "AVAXUSDT"
     data_dir = "./data/ticks"
     timeframe = "15m"

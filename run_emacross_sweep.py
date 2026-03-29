@@ -121,6 +121,14 @@ def run_single(params: dict):
 
 
 def main():
+    import warnings
+    warnings.warn(
+        "run_emacross_sweep.py is deprecated. Use:\n"
+        "  python app.py sweep --strategy EMACrossMACDTrend --symbol AVAXUSDT "
+        "--param-grid grid.yaml\n"
+        "This script will be removed in a future version.",
+        DeprecationWarning, stacklevel=2,
+    )
     grid = ParameterGrid(PARAM_GRID)
     all_combos = list(grid)
     total = len(all_combos)

@@ -47,25 +47,30 @@ cp .env.example .env
 ### 4. Run a Backtest
 
 ```bash
-# Single backtest — EMACrossMACDTrend on AVAXUSDT 15m
-python run_emacross_backtest.py
+# Unified CLI — single backtest
+python app.py backtest --strategy EMACrossMACDTrend --symbol AVAXUSDT \
+    --strategy-params '{"fast_ema_period":12,"slow_ema_period":26,"macd_signal":9}'
 
-# Parameter sweep (108 combinations, ~30 min)
-python run_emacross_sweep.py
+# Parameter sweep
+python app.py sweep --strategy EMACrossMACDTrend --symbol AVAXUSDT \
+    --param-grid grid.yaml --csv-output results.csv
 
-# Flexible CLI backtest
-python run_unified_backtest.py --symbol DOGEUSDT --leverage 10 --margin-usd 100
+# Validate a config file
+python app.py validate --config live_config_emacross.yaml
 ```
 
 ### 5. Run Live Trading (Dry-Run First!)
 
 ```bash
 # Paper trading — no real orders, uses live market data
-python live_runner.py --config live_config_emacross.yaml --dry-run
+python app.py dry-run --config live_config_emacross.yaml
 
 # Real trading (use with extreme caution)
-python live_runner.py --config live_config_emacross.yaml
+python app.py live --config live_config_emacross.yaml
 ```
+
+> **Legacy scripts** (`live_runner.py`, `run_emacross_backtest.py`, etc.) still work
+> but print a deprecation warning. Migrate to `app.py` subcommands above.
 
 ### 6. Docker
 
@@ -74,7 +79,7 @@ python live_runner.py --config live_config_emacross.yaml
 docker build -t tradebot .
 
 # Dry-run
-docker run --env-file .env tradebot python live_runner.py --config live_config_emacross.yaml --dry-run
+docker run --env-file .env tradebot python app.py dry-run --config live_config_emacross.yaml
 
 # Production
 docker run -d --env-file .env --restart unless-stopped tradebot
@@ -86,9 +91,16 @@ docker run -d --env-file .env --restart unless-stopped tradebot
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Entry Points                             │
-│  live_runner.py (production)  │  run_*_backtest.py (research)   │
-└───────────────┬───────────────┴──────────────┬──────────────────┘
+│                     Unified Entry Point                          │
+│  app.py  (backtest | live | dry-run | sweep | validate)         │
+└───────────────┬─────────────────────────────────────────────────┘
+                │
+     ┌──────────▼──────────────────────────────────────────┐
+     │              Application Layer (core/)               │
+     │  factories/  — StrategyFactory, BrokerFactory, etc.  │
+     │  services/   — BacktestService, LiveService, Sweep   │
+     │  bootstrap   — composition root                      │
+     └──────────┬──────────────────────────────┬───────────┘
                 │                              │
      ┌──────────▼──────────┐        ┌──────────▼──────────┐
      │    Live Trading      │        │     Backtesting      │
@@ -132,19 +144,19 @@ Follow this progression — **never skip steps**:
 
 ```
 1. BACKTEST          →  Validate strategy on historical data
-   python run_emacross_backtest.py
+   python app.py backtest --strategy EMACrossMACDTrend --symbol AVAXUSDT
 
 2. DRY-RUN (paper)   →  Verify live data flow, no real money
-   python live_runner.py --config config/profiles/safe.yaml --dry-run
+   python app.py dry-run --config config/profiles/safe.yaml
 
 3. TESTNET           →  Real orders on Binance testnet
    # Set api.testnet: true in config
 
 4. LIMITED LIVE      →  Small margin ($5-10), single coin, safe profile
-   python live_runner.py --config config/profiles/safe.yaml
+   python app.py live --config config/profiles/safe.yaml
 
 5. SCALED LIVE       →  Increase margin/coins gradually
-   python live_runner.py --config config/profiles/standard.yaml
+   python app.py live --config config/profiles/standard.yaml
 ```
 
 ---
@@ -160,7 +172,7 @@ Pre-built risk profiles in `config/profiles/`:
 | `aggressive.yaml` | $25 | 15x | 3 | $75 | Experienced, high-conviction |
 
 ```bash
-python live_runner.py --config config/profiles/safe.yaml --dry-run
+python app.py dry-run --config config/profiles/safe.yaml
 ```
 
 ---
@@ -234,6 +246,12 @@ pytest tests/ --cov=. --cov-report=term-missing
 ## Project Structure
 
 ```
+├── app.py              # Unified CLI entrypoint (backtest, live, dry-run, sweep, validate)
+├── core/               # Application layer — factories, services, bootstrap
+│   ├── factories/      #   StrategyFactory, BrokerFactory, NewsFactory
+│   ├── services/       #   BacktestService, LiveService, SweepService
+│   ├── bootstrap.py    #   Composition root (register defaults)
+│   └── config_validator.py
 ├── Backtest/           # Backtesting engine, metrics, scoring, CV splits
 ├── Strategy/           # Strategy implementations (EMACross, Donchian, RSI)
 ├── Interfaces/         # Abstract interfaces (IStrategy, IBroker, etc.)
@@ -244,10 +262,26 @@ pytest tests/ --cov=. --cov-report=term-missing
 ├── data/               # Tick data storage
 ├── tests/              # Test suite
 ├── tools/              # Utility scripts (fetch ticks, smoke tests)
-├── live_runner.py      # Production entry-point
-├── run_*_backtest.py   # Backtest scripts
+├── live_runner.py      # (deprecated) Legacy live entry-point → use app.py
+├── run_*_backtest.py   # (deprecated) Legacy backtest scripts → use app.py
 └── Dockerfile          # Container deployment
 ```
+
+---
+
+## Migration from Legacy Scripts
+
+All legacy `run_*.py` scripts and `live_runner.py` now print deprecation warnings.
+They still work, but will be removed in a future release. Use `app.py` instead:
+
+| Old Command | New Command |
+|---|---|
+| `python live_runner.py --config cfg.yaml` | `python app.py live --config cfg.yaml` |
+| `python live_runner.py --config cfg.yaml --dry-run` | `python app.py dry-run --config cfg.yaml` |
+| `python run_emacross_backtest.py` | `python app.py backtest --strategy EMACrossMACDTrend --symbol AVAXUSDT --strategy-params '{...}'` |
+| `python run_unified_backtest.py --symbol DOGEUSDT` | `python app.py backtest --strategy RSIThreshold --symbol DOGEUSDT` |
+| `python run_emacross_sweep.py` | `python app.py sweep --strategy EMACrossMACDTrend --param-grid grid.yaml` |
+| `python run_tp_sl_sweep.py` | `python app.py sweep --strategy RSIThreshold --param-grid grid.yaml` |
 
 ---
 

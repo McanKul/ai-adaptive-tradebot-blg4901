@@ -79,6 +79,11 @@ def sentiment_label(score: float) -> str:
 
 
 async def run():
+    import warnings
+    warnings.warn(
+        "run_mock_news_engine.py is a test utility and may be removed in a future version.",
+        DeprecationWarning, stacklevel=2,
+    )
 
     # ── Setup ──────────────────────────────────────────────────────────────
 

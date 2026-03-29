@@ -285,6 +285,14 @@ def run_backtest(args):
 
 
 def main():
+    import warnings
+    warnings.warn(
+        "run_unified_backtest.py is deprecated. Use:\n"
+        "  python app.py backtest --strategy RSIThreshold --symbol DOGEUSDT "
+        '--strategy-params \'{"rsi_period":14}\'\n'
+        "This script will be removed in a future version.",
+        DeprecationWarning, stacklevel=2,
+    )
     parser = argparse.ArgumentParser(
         description="Run unified strategy backtest with tick-level TP/SL"
     )

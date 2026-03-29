@@ -20,6 +20,13 @@ from Strategy.RSIThreshold import Strategy
 
 
 def main():
+   import warnings
+   warnings.warn(
+       "main.py is deprecated. Use:\n"
+       "  python app.py backtest --strategy RSIThreshold --symbol DOGEUSDT\n"
+       "This script will be removed in a future version.",
+       DeprecationWarning, stacklevel=2,
+   )
    try:
       client = Client()
    except Exception as e:

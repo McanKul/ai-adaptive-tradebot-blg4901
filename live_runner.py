@@ -119,6 +119,14 @@ def create_news_components(cfg: LiveConfig):
 
 # ── Main ──────────────────────────────────────────────────────────────
 async def main(config_path: str, dry_run: bool = False):
+    import warnings
+    _mode = "dry-run" if dry_run else "live"
+    warnings.warn(
+        f"live_runner.py is deprecated. Use:\n"
+        f"  python app.py {_mode} --config {config_path}\n"
+        "This script will be removed in a future version.",
+        DeprecationWarning, stacklevel=2,
+    )
     # 1) Load config
     if config_path.endswith(".json"):
         cfg = LiveConfig.from_json(config_path)

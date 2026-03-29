@@ -122,6 +122,14 @@ def run_single(params: dict) -> BacktestResult:
 
 
 def main():
+    import warnings
+    warnings.warn(
+        "run_tp_sl_sweep.py is deprecated. Use:\n"
+        "  python app.py sweep --strategy RSIThreshold --symbol AVAXUSDT "
+        "--param-grid grid.yaml\n"
+        "This script will be removed in a future version.",
+        DeprecationWarning, stacklevel=2,
+    )
     grid = ParameterGrid(PARAM_GRID)
     all_combos = list(grid)
     total = len(all_combos)
