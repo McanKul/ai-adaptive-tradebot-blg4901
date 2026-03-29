@@ -1,20 +1,28 @@
-# Auto-generated from requirements.in — do not edit manually.
-# Regenerate: pip-compile requirements.in -o requirements.txt
-#
-# To add/change a dependency, edit requirements.in and recompile.
+# requirements.in — Human-editable dependency list
+# Compile to requirements.txt:  pip-compile requirements.in -o requirements.txt
+# Then install:                 pip install -r requirements.txt
 
+# Core trading
 python-binance>=1.0.19,<2.0
 pandas>=2.0,<3.0
 numpy>=1.24,<2.0
 TA-Lib>=0.4.28
 PyYAML>=6.0,<7.0
+
+# Testing
 pytest>=7.0,<9.0
 pytest-asyncio>=0.21,<1.0
+
+# AI / Sentiment (optional)
 google-genai>=0.3.0
 openai>=1.0,<2.0
+
+# Utilities
 python-dotenv>=1.0,<2.0
 aiohttp>=3.9,<4.0
 requests>=2.31,<3.0
 matplotlib>=3.7,<4.0
+
+# News scraping
 ntscraper>=0.3
 ddgs>=6.0

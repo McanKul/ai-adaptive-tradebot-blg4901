@@ -1,0 +1,107 @@
+# =====================================================================
+# STANDARD PROFILE — Normal operation
+# =====================================================================
+# Use this when:
+#   - You have validated signals in dry-run and safe profile
+#   - You are comfortable with the strategy's behavior
+#   - You want moderate risk/reward balance
+#
+# Characteristics:
+#   - 10x leverage, $10 margin ($100 notional)
+#   - Up to 2 concurrent positions
+#   - $30 daily loss limit
+#   - 10% account drawdown kill switch
+#
+# Usage:
+#   python live_runner.py --config config/profiles/standard.yaml
+# =====================================================================
+
+strategy:
+  class: "EMACrossMACDTrend"
+  params:
+    fast_ema_period: 12
+    slow_ema_period: 21
+    macd_signal: 9
+    atr_period: 14
+    atr_mult: 2.5
+    adx_period: 14
+    adx_threshold: 25.0
+    volume_filter: true
+    volume_period: 20
+    risk_pct: 0.005
+    allow_reversal: true
+    exit_on_macd_cross: true
+    rsi_period: 14
+    rsi_overbought: 75.0
+    rsi_oversold: 25.0
+    use_rsi_filter: true
+    use_ema_slope: true
+    min_histogram_pct: 0.0
+
+symbols:
+  - SOLUSDT
+  - XRPUSDT
+  - DOGEUSDT
+  - ADAUSDT
+  - AVAXUSDT
+  - DOTUSDT
+  - LINKUSDT
+  - NEARUSDT
+  - APTUSDT
+  - SUIUSDT
+  - INJUSDT
+  - FTMUSDT
+  - ATOMUSDT
+  - RUNEUSDT
+
+timeframe: "15m"
+name: "EMACross_Standard"
+
+sizing:
+  mode: "margin_usd"
+  margin_usd: 10.0              # $10 margin → $100 notional
+  leverage: 10
+  leverage_mode: "margin"
+
+exit:
+  take_profit_pct: 1.00         # 100% of margin = 10% price move at 10x
+  stop_loss_pct: 0.50           # 50% of margin = 5% price move at 10x ($5 max loss)
+  trailing_stop_pct: null
+  max_holding_bars: 96
+  use_exchange_orders: true
+
+risk:
+  max_position_size: 100000.0
+  max_position_notional: 200.0
+  max_daily_loss: 30.0          # $30 daily loss cap
+  max_daily_loss_pct: 0.10
+  max_drawdown: 0.20
+  max_leverage: 20.0
+  max_concurrent_positions: 2
+
+global_risk:
+  max_account_drawdown_pct: 0.10
+  max_total_exposure_usd: 300.0
+  max_correlated_positions: 2
+  persist_path: "logs/live_risk_state.json"
+
+execution:
+  margin_type: "ISOLATED"
+  preload_bars: 250
+  preload_batch: 10
+
+news:
+  enabled: false
+
+symbol_routes:
+  - symbol: DOGEUSDT
+    leverage: 8
+    margin_usd: 5.0
+    stop_loss_pct: 0.40
+
+rate_limit:
+  requests_per_minute: 1000
+  exchange_info_ttl_sec: 300
+
+api:
+  testnet: false

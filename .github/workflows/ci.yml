@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main, mcan_main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install TA-Lib C library
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential wget
+          wget -q https://github.com/TA-Lib/ta-lib/releases/download/v0.6.4/ta-lib-0.6.4-src.tar.gz
+          tar -xzf ta-lib-0.6.4-src.tar.gz
+          cd ta-lib-0.6.4 && ./configure --prefix=/usr && make -j$(nproc) && sudo make install
+          sudo ldconfig
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff
+
+      - name: Lint (ruff)
+        run: |
+          ruff check . --select=E9,F63,F7,F82 --exit-zero --output-format=text
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --timeout=120 -x \
+            --ignore=tests/test_live_engine_full.py \
+            --ignore=tests/test_broker_binance.py \
+            --ignore=tests/test_news_source.py \
+            --ignore=tests/test_sentiment_analyzer.py \
+            --ignore=tests/test_streamer_reconnect.py \
+            -k "not live and not binance and not network"
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
