@@ -15,8 +15,8 @@
 # Secim: Calmar #5 (konservatif) — dusuk DD, robust
 #
 # Kullanim:
-#     python live_runner.py --config live_config_emacross.yaml
-#     python live_runner.py --config live_config_emacross.yaml --dry-run
+#     python app.py live --config live_config_emacross.yaml
+#     python app.py dry-run --config live_config_emacross.yaml
 # =====================================================================
 
 # ---------- strategy ----------

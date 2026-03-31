@@ -7,8 +7,8 @@
 #   Win Rate: 50-66%  |  Profit Factor: 5.18
 #
 # Kullanım:
-#     python live_runner.py --config live_config.yaml
-#     python live_runner.py --config live_config.yaml --dry-run
+#     python app.py live --config live_config.yaml
+#     python app.py dry-run --config live_config.yaml
 # =====================================================================
 
 # ---------- strategy ----------

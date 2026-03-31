@@ -13,8 +13,8 @@
 #   - Conservative kill switch (8% account drawdown)
 #
 # Usage:
-#   python live_runner.py --config config/profiles/safe.yaml --dry-run
-#   python live_runner.py --config config/profiles/safe.yaml
+#   python app.py dry-run --config config/profiles/safe.yaml
+#   python app.py live --config config/profiles/safe.yaml
 # =====================================================================
 
 strategy:

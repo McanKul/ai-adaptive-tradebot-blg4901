@@ -39,5 +39,5 @@ COPY --chown=bot:bot . .
 RUN mkdir -p /app/logs /app/data && chown -R bot:bot /app/logs /app/data
 USER bot
 
-ENTRYPOINT ["python", "live_runner.py"]
+ENTRYPOINT ["python", "app.py", "live"]
 CMD ["--config", "live_config_emacross.yaml"]

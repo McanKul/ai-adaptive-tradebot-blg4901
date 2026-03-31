@@ -13,7 +13,7 @@
 #   - 10% account drawdown kill switch
 #
 # Usage:
-#   python live_runner.py --config config/profiles/standard.yaml
+#   python app.py live --config config/profiles/standard.yaml
 # =====================================================================
 
 strategy:

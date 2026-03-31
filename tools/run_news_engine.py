@@ -1,5 +1,11 @@
 """
-Manual runner for the News Engine.
+tools/run_news_engine.py
+========================
+Manual runner for the News Engine — test DDG + Gemini sentiment on live news.
+
+Usage:
+    python tools/run_news_engine.py
+    python tools/run_news_engine.py BTCUSDT SOLUSDT
 """
 import asyncio
 import os
@@ -22,11 +28,6 @@ def sentiment_label(score: float) -> str:
     else: return "Very Bullish"
 
 async def run(symbols: list = None) -> dict:
-    import warnings
-    warnings.warn(
-        "run_news_engine.py is a test utility and may be removed in a future version.",
-        DeprecationWarning, stacklevel=2,
-    )
     if symbols is None:
         symbols = ["BTCUSDT", "ETHUSDT"]
 

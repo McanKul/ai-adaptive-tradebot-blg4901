@@ -17,7 +17,7 @@
 #   - 15% account drawdown kill switch
 #
 # Usage:
-#   python live_runner.py --config config/profiles/aggressive.yaml
+#   python app.py live --config config/profiles/aggressive.yaml
 # =====================================================================
 
 strategy:

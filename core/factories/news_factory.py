@@ -3,7 +3,7 @@ core/factories/news_factory.py
 ===============================
 Factory for creating news sentiment components.
 
-Replaces the create_news_components() function from live_runner.py.
+Replaces the former create_news_components() function.
 """
 from __future__ import annotations
 

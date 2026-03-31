@@ -7,7 +7,7 @@
 #   Return: 91%  |  Sharpe: 0.833  |  Max DD: 15.6%  |  Trades: 7
 #
 # Usage:
-#     python live_runner.py --config example_live_config.yaml
+#     python app.py live --config example_live_config.yaml
 # =====================================================================
 
 # ---------- strategy ----------

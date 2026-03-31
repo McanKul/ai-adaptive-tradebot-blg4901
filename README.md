@@ -68,10 +68,6 @@ python app.py dry-run --config live_config_emacross.yaml
 # Real trading (use with extreme caution)
 python app.py live --config live_config_emacross.yaml
 ```
-
-> **Legacy scripts** (`live_runner.py`, `run_emacross_backtest.py`, etc.) still work
-> but print a deprecation warning. Migrate to `app.py` subcommands above.
-
 ### 6. Docker
 
 ```bash
@@ -261,27 +257,9 @@ pytest tests/ --cov=. --cov-report=term-missing
 ├── config/profiles/    # Risk profiles (safe, standard, aggressive)
 ├── data/               # Tick data storage
 ├── tests/              # Test suite
-├── tools/              # Utility scripts (fetch ticks, smoke tests)
-├── live_runner.py      # (deprecated) Legacy live entry-point → use app.py
-├── run_*_backtest.py   # (deprecated) Legacy backtest scripts → use app.py
+├── tools/              # Utility scripts (fetch ticks, news engine, smoke tests)
 └── Dockerfile          # Container deployment
 ```
-
----
-
-## Migration from Legacy Scripts
-
-All legacy `run_*.py` scripts and `live_runner.py` now print deprecation warnings.
-They still work, but will be removed in a future release. Use `app.py` instead:
-
-| Old Command | New Command |
-|---|---|
-| `python live_runner.py --config cfg.yaml` | `python app.py live --config cfg.yaml` |
-| `python live_runner.py --config cfg.yaml --dry-run` | `python app.py dry-run --config cfg.yaml` |
-| `python run_emacross_backtest.py` | `python app.py backtest --strategy EMACrossMACDTrend --symbol AVAXUSDT --strategy-params '{...}'` |
-| `python run_unified_backtest.py --symbol DOGEUSDT` | `python app.py backtest --strategy RSIThreshold --symbol DOGEUSDT` |
-| `python run_emacross_sweep.py` | `python app.py sweep --strategy EMACrossMACDTrend --param-grid grid.yaml` |
-| `python run_tp_sl_sweep.py` | `python app.py sweep --strategy RSIThreshold --param-grid grid.yaml` |
 
 ---
 

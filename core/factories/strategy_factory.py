@@ -3,7 +3,7 @@ core/factories/strategy_factory.py
 ===================================
 Factory for resolving and instantiating strategy classes.
 
-Replaces the STRATEGY_MAP dict + resolve_strategy_class() from live_runner.py.
+Replaces the former STRATEGY_MAP dict + resolve_strategy_class().
 """
 from __future__ import annotations
 

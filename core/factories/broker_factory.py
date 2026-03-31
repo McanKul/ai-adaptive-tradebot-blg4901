@@ -3,7 +3,7 @@ core/factories/broker_factory.py
 =================================
 Factory for creating broker instances (live or dry-run).
 
-Replaces the if/else broker creation logic from live_runner.py.
+Replaces the former if/else broker creation logic.
 """
 from __future__ import annotations
 

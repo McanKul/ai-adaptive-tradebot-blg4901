@@ -4,7 +4,7 @@ core/services/sweep_service.py
 Thin orchestration wrapper for parameter sweeps.
 
 Composes StrategyFactory + ParameterGrid + Scorer + BacktestEngine.
-Unifies run_emacross_sweep.py and run_tp_sl_sweep.py into one service.
+Unified parameter sweep service for any registered strategy.
 """
 from __future__ import annotations
 
