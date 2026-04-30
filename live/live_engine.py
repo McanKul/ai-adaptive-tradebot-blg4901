@@ -54,12 +54,13 @@ class LiveEngine:
         self,
         cfg: LiveConfig,
         broker: IBroker,
-        strategy_cls: Type,
-        global_risk: LiveGlobalRisk,
+        strategy_cls: Optional[Type] = None,
+        global_risk: LiveGlobalRisk = None,
         news_source: Optional[INewsSource] = None,
         sentiment_analyzer: Optional[ISentimentAnalyzer] = None,
         signal_combiner: Optional[ISignalCombiner] = None,
         market_client=None,  # Real client for WebSocket/preload in dry-run mode
+        strategy=None,  # Pre-built IStrategy (e.g. CompositeStrategy); takes precedence
     ):
         self.cfg = cfg
         self.broker = broker
@@ -69,10 +70,17 @@ class LiveEngine:
         self._market_client = market_client or broker.client
 
         # ── Strategy Instance ──────────────────────────────────────────
-        self.strategy = strategy_cls(
-            bar_store=self.bar_store,
-            **cfg.strategy_params,
-        )
+        if strategy is not None:
+            self.strategy = strategy
+        elif strategy_cls is not None:
+            self.strategy = strategy_cls(
+                bar_store=self.bar_store,
+                **cfg.strategy_params,
+            )
+        else:
+            raise ValueError(
+                "LiveEngine requires either strategy_cls or a pre-built strategy"
+            )
 
         # ── LiveSupervisor (per-symbol PositionManager) ────────────────
         self.supervisor = LiveSupervisor(

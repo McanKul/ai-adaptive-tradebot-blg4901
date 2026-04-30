@@ -15,6 +15,7 @@ import sys
 
 from core.factories.strategy_factory import StrategyFactory
 from core.factories.broker_factory import BrokerFactory
+from core.factories.composite_factory import CompositeFactory
 from core.factories.news_factory import NewsFactory
 from live.live_config import LiveConfig
 from live.live_engine import LiveEngine
@@ -47,9 +48,19 @@ class LiveService:
             mode_label, cfg.name, cfg.symbols, cfg.strategy_class,
         )
 
-        # 2) Resolve strategy class
-        strategy_cls = StrategyFactory.resolve_class(cfg.strategy_class)
-        log.info("Strategy class resolved: %s", strategy_cls.__name__)
+        # 2) Resolve strategy — composite spec takes precedence over class
+        strategy_instance = None
+        strategy_cls = None
+        if cfg.composite_spec:
+            strategy_instance = CompositeFactory.from_path(cfg.composite_spec)
+            log.info(
+                "Composite strategy loaded: %s | slots=%d policy=%s",
+                strategy_instance.name, len(strategy_instance.slots),
+                strategy_instance.policy,
+            )
+        else:
+            strategy_cls = StrategyFactory.resolve_class(cfg.strategy_class)
+            log.info("Strategy class resolved: %s", strategy_cls.__name__)
 
         # 3) Create broker via factory
         broker_mode = "dry" if dry_run else "live"
@@ -68,6 +79,7 @@ class LiveService:
             cfg=cfg,
             broker=broker,
             strategy_cls=strategy_cls,
+            strategy=strategy_instance,
             global_risk=global_risk,
             news_source=news.news_source,
             sentiment_analyzer=news.sentiment_analyzer,

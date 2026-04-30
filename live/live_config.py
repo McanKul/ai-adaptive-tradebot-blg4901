@@ -187,6 +187,9 @@ class LiveConfig:
     # Strategy
     strategy_class: str = "RSIThreshold"
     strategy_params: Dict[str, Any] = field(default_factory=dict)
+    # Optional path to a composite spec (YAML/JSON).  When set, the live
+    # engine runs a CompositeStrategy and ignores strategy_class/params.
+    composite_spec: Optional[str] = None
 
     # Symbols & timeframe
     symbols: List[str] = field(default_factory=lambda: ["DOGEUSDT"])
@@ -282,6 +285,7 @@ class LiveConfig:
         return LiveConfig(
             strategy_class=strat.get("class", "RSIThreshold"),
             strategy_params=strat.get("params", {}),
+            composite_spec=strat.get("composite_spec"),
             symbols=d.get("symbols", ["DOGEUSDT"]),
             timeframe=d.get("timeframe", "1m"),
             name=d.get("name", "LiveStrategy"),

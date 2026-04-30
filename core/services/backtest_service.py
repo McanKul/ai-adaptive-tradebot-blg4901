@@ -16,6 +16,7 @@ from Backtest.runner import BacktestConfig, DataConfig
 from Backtest.scoring.batch import BatchBacktest, BatchResult
 from Interfaces.metrics_interface import BacktestResult
 from Interfaces.strategy_adapter import SizingConfig, SizingMode
+from core.factories.composite_factory import CompositeFactory
 from core.factories.strategy_factory import StrategyFactory
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ class BacktestService:
         tick_exit: bool = True,
         data_dir: str = "./data/ticks",
         realism_config_path: Optional[str] = None,
+        composite_spec_path: Optional[str] = None,
         **engine_overrides: Any,
     ) -> BacktestResult:
         """
@@ -105,18 +107,27 @@ class BacktestService:
         if realism_config_path:
             config.realism = RealismConfig.from_yaml(realism_config_path)
 
-        # -- Strategy -------------------------------------------------------
-        strategy_cls = StrategyFactory.resolve_class(strategy_name)
-        strategy = strategy_cls(**strategy_params)
-
-        log.info(
-            "Backtest: strategy=%s symbol=%s tf=%s sizing=%s",
-            strategy_name, symbol, timeframe, sizing_config.mode.value,
-        )
+        # -- Strategy (composite or single) ---------------------------------
+        if composite_spec_path:
+            strategy = CompositeFactory.from_path(composite_spec_path)
+            engine_sizing = None  # composite owns sizing
+            log.info(
+                "Backtest: composite spec=%s symbol=%s tf=%s slots=%d policy=%s",
+                composite_spec_path, symbol, timeframe,
+                len(strategy.slots), strategy.policy,
+            )
+        else:
+            strategy_cls = StrategyFactory.resolve_class(strategy_name)
+            strategy = strategy_cls(**strategy_params)
+            engine_sizing = sizing_config
+            log.info(
+                "Backtest: strategy=%s symbol=%s tf=%s sizing=%s",
+                strategy_name, symbol, timeframe, sizing_config.mode.value,
+            )
 
         # -- Run ------------------------------------------------------------
         engine = BacktestEngine(config)
-        result = engine.run(strategy, sizing_config=sizing_config)
+        result = engine.run(strategy, sizing_config=engine_sizing)
         return result
 
     # ------------------------------------------------------------------

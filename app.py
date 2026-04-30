@@ -82,7 +82,12 @@ def _parse_strategy_params(raw: str | None) -> dict:
 def _add_backtest_parser(subparsers):
     p = subparsers.add_parser("backtest", help="Run a single backtest")
 
-    p.add_argument("--strategy", required=True, help="Strategy name (e.g. EMACrossMACDTrend)")
+    # Either --strategy or --composite-spec is required (composite skips --strategy)
+    p.add_argument("--strategy", default=None,
+                   help="Strategy name (e.g. EMACrossMACDTrend). "
+                        "Ignored when --composite-spec is set.")
+    p.add_argument("--composite-spec", default=None,
+                   help="Path to composite YAML/JSON for multi-strategy run")
     p.add_argument("--symbol", default="AVAXUSDT", help="Trading symbol")
     p.add_argument("--timeframe", default="15m", help="Bar timeframe")
     p.add_argument("--strategy-params", default=None,
@@ -128,13 +133,22 @@ def _add_backtest_parser(subparsers):
 def _cmd_backtest(args):
     from core.services.backtest_service import BacktestService
 
+    composite_spec = getattr(args, "composite_spec", None)
+    if not composite_spec and not args.strategy:
+        print("ERROR: --strategy is required (or pass --composite-spec).")
+        sys.exit(2)
+
     strategy_params = _parse_strategy_params(args.strategy_params)
+    strategy_arg = args.strategy or "composite"
 
     svc = BacktestService()
 
     if getattr(args, "cv_method", "none") != "none":
+        if composite_spec:
+            print("ERROR: --composite-spec is not yet supported with --cv-method.")
+            sys.exit(2)
         batch = svc.run_with_cv(
-            strategy_name=args.strategy,
+            strategy_name=strategy_arg,
             strategy_params=strategy_params,
             symbol=args.symbol,
             timeframe=args.timeframe,
@@ -161,7 +175,7 @@ def _cmd_backtest(args):
         return
 
     result = svc.run_single(
-        strategy_name=args.strategy,
+        strategy_name=strategy_arg,
         strategy_params=strategy_params,
         symbol=args.symbol,
         timeframe=args.timeframe,
@@ -176,6 +190,7 @@ def _cmd_backtest(args):
         tick_exit=args.tick_exit,
         data_dir=args.data_dir,
         realism_config_path=args.realism_config,
+        composite_spec_path=composite_spec,
     )
     svc.print_result(result, symbol=args.symbol)
 

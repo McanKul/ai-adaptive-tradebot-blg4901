@@ -1,0 +1,60 @@
+# Composite strategy spec — two slots, regime-gated.
+#
+# Each slot carries its own sizing / entry coefficient / exit policy / regime
+# filter, so different regimes can have different "entry coefficients", risk,
+# and exit semantics — which is the per-regime-tuning you asked for.
+#
+# Phase-2 regime detector (ADX + ATR percentile) populates the regime tags
+# the slots gate on.  Until then, set `policy: fixed` to run all slots.
+#
+# Usage:
+#   python app.py backtest \
+#     --composite-spec config/profiles/multi_strategy_example.yaml \
+#     --symbol BTCUSDT --timeframe 1h \
+#     --realism-config example_realism_config.yaml
+
+name: trend_plus_meanrev
+policy: regime_gate            # fixed | regime_gate | regime_weight
+
+# Fallback sizing for slots that didn't declare their own.
+default_sizing:
+  mode: margin_usd
+  margin_usd: 100
+  leverage: 5
+  leverage_mode: margin
+
+slots:
+  - id: trend_v1
+    strategy: EMACrossMACDTrend
+    params:
+      fast_ema_period: 12
+      slow_ema_period: 26
+      signal_period: 9
+    weight: 1.0
+    entry_coefficient: 1.0      # full size on trend signals
+    sizing:
+      mode: margin_usd
+      margin_usd: 150            # bigger book on trend
+      leverage: 5
+    exit:
+      tp_pct: 0.025
+      sl_pct: 0.012
+      trailing_pct: 0.008
+      max_bars: 96
+    regimes: [trend_up, trend_down]   # only fires in trending regimes
+
+  - id: meanrev_v1
+    strategy: RSIThreshold
+    params:
+      rsi_period: 14
+    weight: 1.0
+    entry_coefficient: 0.5      # half size — mean-rev is lower conviction
+    sizing:
+      mode: margin_usd
+      margin_usd: 75
+      leverage: 3
+    exit:
+      tp_pct: 0.012
+      sl_pct: 0.006
+      max_bars: 24
+    regimes: [range, vol_low]
