@@ -43,6 +43,7 @@ from Backtest.exit_manager import ExitConfig
 from Interfaces.strategy_adapter import SizingConfig, SizingMode
 from Interfaces.strategy_slot import StrategySlot
 from Strategy.composite_strategy import CompositeStrategy
+from core.factories.regime_factory import RegimeFactory
 from core.factories.strategy_factory import StrategyFactory
 
 
@@ -103,6 +104,10 @@ class CompositeFactory:
         slots_raw = spec.get("slots") or []
         if not slots_raw:
             raise ValueError("composite spec must contain at least one slot")
+
+        # Build regime detector from spec if not provided directly
+        if regime_detector is None and spec.get("regime"):
+            regime_detector = RegimeFactory.from_spec(spec["regime"])
 
         slots = []
         for s in slots_raw:

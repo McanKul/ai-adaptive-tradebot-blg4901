@@ -16,6 +16,14 @@
 name: trend_plus_meanrev
 policy: regime_gate            # fixed | regime_gate | regime_weight
 
+# Regime detector composes ADX (trending vs ranging) with ATR percentile
+# (vol_high/mid/low).  Composite slots gate on the merged tag set.
+regime:
+  - type: ADXRegimeDetector
+    params: {period: 14, trend_threshold: 25, di_gap: 5}
+  - type: ATRPercentileRegime
+    params: {atr_period: 14, window: 200, hi_pct: 0.8, lo_pct: 0.2}
+
 # Fallback sizing for slots that didn't declare their own.
 default_sizing:
   mode: margin_usd
