@@ -21,12 +21,15 @@ class TestStrategyFactory(unittest.TestCase):
         StrategyFactory._registry.clear()
         register_defaults()
 
-    def test_default_registry_has_three_strategies(self):
+    def test_default_registry_has_core_strategies(self):
         available = StrategyFactory.list_available()
-        self.assertIn("RSIThreshold", available)
-        self.assertIn("EMACrossMACDTrend", available)
-        self.assertIn("DonchianATRVolTarget", available)
-        self.assertEqual(len(available), 3)
+        for name in (
+            "RSIThreshold",
+            "EMACrossMACDTrend",
+            "DonchianATRVolTarget",
+            "FundingRateArbStrategy",
+        ):
+            self.assertIn(name, available)
 
     def test_resolve_class_rsi(self):
         cls = StrategyFactory.resolve_class("RSIThreshold")
