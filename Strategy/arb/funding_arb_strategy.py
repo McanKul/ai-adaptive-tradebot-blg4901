@@ -33,6 +33,17 @@ The strategy buffers per-symbol bars internally with
 :class:`BarSyncBuffer` so the engine doesn't need to be aware that the
 strategy is multi-symbol.  The engine still calls ``on_bar`` once per
 symbol per bar; we only act when both legs are aligned.
+
+Leg atomicity
+-------------
+The engine's risk pipeline checks orders one-by-one, so in principle a
+spot leg could be approved while the perp leg is rejected — leaving an
+unhedged exposure.  Strategies that need all-or-nothing execution
+should call :meth:`Backtest.risk.BasicRiskManager.validate_order_set`
+on the returned ``decision.orders`` before submission.  This v1
+implementation relies on the risk limits being permissive enough that
+both legs pass; the validation hook is deliberate so callers stay in
+control.
 """
 from __future__ import annotations
 import csv

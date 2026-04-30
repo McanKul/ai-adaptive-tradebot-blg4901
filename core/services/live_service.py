@@ -3,8 +3,8 @@ core/services/live_service.py
 ==============================
 Thin orchestration wrapper for live / dry-run trading.
 
-Composes BrokerFactory + StrategyFactory + NewsFactory + LiveEngine.
-Composes BrokerFactory + StrategyFactory + NewsFactory + LiveEngine.
+Composes BrokerFactory + StrategyFactory + (optional) CompositeFactory
++ NewsFactory + LiveEngine.
 """
 from __future__ import annotations
 
