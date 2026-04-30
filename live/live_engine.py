@@ -83,9 +83,12 @@ class LiveEngine:
             )
 
         # ── LiveSupervisor (per-symbol PositionManager) ────────────────
+        # ``persist_path`` is run_id-namespaced so two parallel dry-runs
+        # (sentiment ON vs OFF demo) keep separate position stores.
         self.supervisor = LiveSupervisor(
             broker,
             max_global_positions=cfg.risk.max_concurrent_positions,
+            persist_path=cfg.positions_state_path(),
         )
 
         # ── Streamer ───────────────────────────────────────────────────
@@ -99,7 +102,8 @@ class LiveEngine:
         self._EQUITY_REFRESH_SEC: float = 30.0
 
         # ── Live Metrics ─────────────────────────────────────────────
-        self.metrics = LiveMetrics(csv_path="logs/live_trades.csv")
+        # CSV path is run_id-namespaced so parallel dry-runs don't share rows.
+        self.metrics = LiveMetrics(csv_path=cfg.trade_log_path())
 
         # ── Notifications ────────────────────────────────────────────
         self.notifier = TelegramNotifier()

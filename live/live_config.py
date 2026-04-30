@@ -196,6 +196,11 @@ class LiveConfig:
     timeframe: str = "1m"
     name: str = "LiveStrategy"
 
+    # Run tag — used to namespace log/state files so two parallel
+    # dry-runs (e.g. sentiment ON vs OFF) do not stomp on each other.
+    # CLI ``--run-id`` overrides this; CLI > YAML > falls back to ``name``.
+    run_id: Optional[str] = None
+
     # Sub-configs
     sizing: SizingConfig = field(default_factory=SizingConfig)
     exit: ExitConfig = field(default_factory=ExitConfig)
@@ -255,6 +260,28 @@ class LiveConfig:
             return route.margin_type
         return self.execution.margin_type
 
+    # ----- run tagging helpers -----
+    def effective_run_id(self) -> str:
+        """``run_id`` if set, else ``name``.  Used as a path suffix."""
+        return self.run_id or self.name or "live"
+
+    def trade_log_path(self) -> str:
+        """CSV path for live trade metrics, namespaced by run_id."""
+        return f"logs/live_trades_{self.effective_run_id()}.csv"
+
+    def positions_state_path(self) -> str:
+        """JSON path for the position store, namespaced by run_id."""
+        return f"logs/live_positions_{self.effective_run_id()}.json"
+
+    def risk_state_path(self) -> str:
+        """JSON path for the global-risk persist file, namespaced by run_id.
+        Falls back to the explicit ``global_risk.persist_path`` if it has
+        been set to a non-default value."""
+        default = "logs/live_risk_state.json"
+        if self.global_risk.persist_path != default:
+            return self.global_risk.persist_path
+        return f"logs/live_risk_state_{self.effective_run_id()}.json"
+
     # ----- serialisation helpers -----
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "LiveConfig":
@@ -289,6 +316,7 @@ class LiveConfig:
             symbols=d.get("symbols", ["DOGEUSDT"]),
             timeframe=d.get("timeframe", "1m"),
             name=d.get("name", "LiveStrategy"),
+            run_id=d.get("run_id"),
             sizing=_pick(SizingConfig, sizing_d),
             exit=_pick(ExitConfig, exit_d),
             risk=_pick(RiskConfig, risk_d),

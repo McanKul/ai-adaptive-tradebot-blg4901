@@ -28,13 +28,25 @@ log = setup_logger("LiveService")
 class LiveService:
     """Run live or dry-run trading using factory-wired components."""
 
-    async def run(self, config_path: str, dry_run: bool = False) -> None:
+    async def run(
+        self,
+        config_path: str,
+        dry_run: bool = False,
+        run_id: str | None = None,
+        sentiment_override: str | None = None,
+    ) -> None:
         """
         Load config, create components via factories, and run the engine.
 
         Args:
             config_path: Path to YAML or JSON config file.
             dry_run: If ``True``, use ``DryBroker`` (paper trading).
+            run_id: Optional override for ``LiveConfig.run_id`` — used to
+                namespace log/state files when running parallel demos
+                (e.g. sentiment ON vs OFF A/B).
+            sentiment_override: Force ``"on"`` or ``"off"`` regardless of
+                the YAML's ``news.enabled`` setting.  Useful for the
+                thesis demo recipe.
         """
         # 1) Load config
         if config_path.endswith(".json"):
@@ -42,10 +54,18 @@ class LiveService:
         else:
             cfg = LiveConfig.from_yaml(config_path)
 
+        # CLI overrides
+        if run_id:
+            cfg.run_id = run_id
+        if sentiment_override is not None:
+            cfg.news.enabled = sentiment_override == "on"
+
         mode_label = "DRY-RUN" if dry_run else "LIVE"
         log.info(
-            "[%s] Config loaded: %s | symbols=%s | strategy=%s",
-            mode_label, cfg.name, cfg.symbols, cfg.strategy_class,
+            "[%s] Config loaded: %s | run_id=%s | symbols=%s | strategy=%s | sentiment=%s",
+            mode_label, cfg.name, cfg.effective_run_id(),
+            cfg.symbols, cfg.strategy_class,
+            "on" if cfg.news.enabled else "off",
         )
 
         # 2) Resolve strategy — composite spec takes precedence over class
@@ -68,7 +88,9 @@ class LiveService:
         # For dry-run the client is also used as market_client for WS
         market_client = client if dry_run else None
 
-        # 4) Global risk
+        # 4) Global risk — namespace its persist file by run_id so
+        # parallel dry-runs don't share kill-switch state.
+        cfg.global_risk.persist_path = cfg.risk_state_path()
         global_risk = LiveGlobalRisk(cfg.global_risk)
 
         # 5) News sentiment

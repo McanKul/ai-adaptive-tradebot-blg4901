@@ -201,6 +201,10 @@ def _cmd_backtest(args):
 def _add_live_parser(subparsers):
     p = subparsers.add_parser("live", help="Start live trading")
     p.add_argument("--config", required=True, help="Path to YAML/JSON config")
+    p.add_argument("--run-id", default=None,
+                   help="Tag log/state files with this id (default: config.name)")
+    p.add_argument("--sentiment", choices=["on", "off"], default=None,
+                   help="Force sentiment on/off regardless of YAML")
     p.set_defaults(func=_cmd_live)
 
 
@@ -211,7 +215,10 @@ def _cmd_live(args):
 
     from core.services.live_service import LiveService
     svc = LiveService()
-    asyncio.run(svc.run(args.config, dry_run=False))
+    asyncio.run(svc.run(
+        args.config, dry_run=False,
+        run_id=args.run_id, sentiment_override=args.sentiment,
+    ))
 
 
 # ── Subcommand: dry-run ─────────────────────────────────────────────
@@ -220,6 +227,13 @@ def _cmd_live(args):
 def _add_dry_run_parser(subparsers):
     p = subparsers.add_parser("dry-run", help="Start paper trading (no real orders)")
     p.add_argument("--config", required=True, help="Path to YAML/JSON config")
+    p.add_argument("--run-id", default=None,
+                   help="Tag log/state files with this id. Use distinct ids "
+                        "when running A/B sessions in parallel "
+                        "(e.g. --run-id sentiment_on vs --run-id sentiment_off).")
+    p.add_argument("--sentiment", choices=["on", "off"], default=None,
+                   help="Force sentiment on/off regardless of YAML "
+                        "(handy for the thesis demo A/B recipe)")
     p.set_defaults(func=_cmd_dry_run)
 
 
@@ -230,7 +244,10 @@ def _cmd_dry_run(args):
 
     from core.services.live_service import LiveService
     svc = LiveService()
-    asyncio.run(svc.run(args.config, dry_run=True))
+    asyncio.run(svc.run(
+        args.config, dry_run=True,
+        run_id=args.run_id, sentiment_override=args.sentiment,
+    ))
 
 
 # ── Subcommand: sweep ───────────────────────────────────────────────
