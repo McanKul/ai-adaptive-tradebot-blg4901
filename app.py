@@ -45,20 +45,32 @@ from core.bootstrap import register_defaults
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
-def _load_param_grid(path: str) -> dict:
-    """Load a parameter grid from a YAML or JSON file."""
+def _load_param_grid(path: str) -> tuple[dict, list]:
+    """Load a parameter grid + optional constraints from a YAML/JSON file.
+
+    Two formats are supported:
+
+    * **Flat** (legacy):
+        ``{rsi_period: [14, 21], threshold: [0.5, 0.7]}``  → grid only.
+    * **Structured**:
+        ``{grid: {...}, constraints: [{type: less_than, a: x, b: y}, ...]}``
+        → grid + SearchSpace constraints (rsi_oversold < rsi_overbought etc.).
+    """
     if not os.path.exists(path):
         print(f"ERROR: Param-grid file not found: {path}")
         sys.exit(1)
 
     if path.endswith(".json"):
         with open(path) as f:
-            return json.load(f)
+            data = json.load(f)
+    else:
+        import yaml
+        with open(path) as f:
+            data = yaml.safe_load(f)
 
-    # YAML
-    import yaml
-    with open(path) as f:
-        return yaml.safe_load(f)
+    if isinstance(data, dict) and "grid" in data:
+        return data["grid"], data.get("constraints") or []
+    return data, []
 
 
 def _parse_strategy_params(raw: str | None) -> dict:
@@ -260,21 +272,49 @@ def _add_sweep_parser(subparsers):
     p.add_argument("--symbol", default="AVAXUSDT", help="Trading symbol")
     p.add_argument("--timeframe", default="15m", help="Bar timeframe")
     p.add_argument("--param-grid", required=True,
-                   help="Path to YAML/JSON file with parameter grid")
+                   help="Path to YAML/JSON with parameter grid (flat dict or "
+                        "{grid: ..., constraints: [...]})")
 
-    # Sizing
+    # Sizing / exit
     p.add_argument("--margin-usd", type=float, default=100.0)
     p.add_argument("--leverage", type=float, default=10.0)
     p.add_argument("--capital", type=float, default=10_000.0)
-
-    # Exit
     p.add_argument("--tp-pct", type=float, default=None)
     p.add_argument("--sl-pct", type=float, default=None)
 
-    # Data / output
+    # Data / output / realism
     p.add_argument("--data-dir", default="./data/ticks")
     p.add_argument("--csv-output", default=None, help="CSV output path")
     p.add_argument("--top-n", type=int, default=15, help="Top N results to print")
+    p.add_argument("--realism-config", default=None,
+                   help="Path to realism YAML (latency/slippage/funding/borrow)")
+
+    # Cross-validation (parameter selection with leakage-safe scoring)
+    p.add_argument("--cv-method", default="none",
+                   choices=["none", "purged_kfold", "walk_forward", "cpcv"],
+                   help="Score each parameter combo through CV instead of "
+                        "a single full-period run")
+    p.add_argument("--cv-n-splits", type=int, default=5)
+    p.add_argument("--cv-embargo-pct", type=float, default=0.01)
+    p.add_argument("--cv-train-pct", type=float, default=0.6,
+                   help="Walk-forward training-window fraction")
+    p.add_argument("--cv-n-test-splits", type=int, default=2,
+                   help="CPCV test folds per split")
+    p.add_argument("--cv-aggregate", default="mean", choices=["mean", "median", "min"])
+    p.add_argument("--cv-expanding", action="store_true")
+
+    # Selector — minimum-quality filters
+    p.add_argument("--min-trades", type=int, default=None,
+                   help="Drop combos with fewer than N trades")
+    p.add_argument("--min-sharpe", type=float, default=None)
+    p.add_argument("--max-dd", type=float, default=None,
+                   help="Drop combos whose max drawdown exceeds this fraction "
+                        "(0.20 = 20%%)")
+    p.add_argument("--min-win-rate", type=float, default=None)
+    p.add_argument("--cv-stability-weight", type=float, default=None,
+                   help="Penalty multiplier on cv_score_std (only with --cv-method)")
+    p.add_argument("--max-cv-std", type=float, default=None,
+                   help="Reject combos with cv_score_std above this (--cv-method)")
 
     p.set_defaults(func=_cmd_sweep)
 
@@ -282,12 +322,13 @@ def _add_sweep_parser(subparsers):
 def _cmd_sweep(args):
     from core.services.sweep_service import SweepService
 
-    param_grid = _load_param_grid(args.param_grid)
+    param_grid, constraints = _load_param_grid(args.param_grid)
 
     svc = SweepService()
     svc.run_sweep(
         strategy_name=args.strategy,
         param_grid=param_grid,
+        constraints=constraints,
         symbol=args.symbol,
         timeframe=args.timeframe,
         capital=args.capital,
@@ -298,6 +339,20 @@ def _cmd_sweep(args):
         top_n=args.top_n,
         tp_pct=args.tp_pct,
         sl_pct=args.sl_pct,
+        realism_config_path=args.realism_config,
+        cv_method=args.cv_method,
+        cv_n_splits=args.cv_n_splits,
+        cv_embargo_pct=args.cv_embargo_pct,
+        cv_train_pct=args.cv_train_pct,
+        cv_n_test_splits=args.cv_n_test_splits,
+        cv_aggregate=args.cv_aggregate,
+        cv_expanding=args.cv_expanding,
+        min_trades=args.min_trades,
+        min_sharpe=args.min_sharpe,
+        max_drawdown=args.max_dd,
+        min_win_rate=args.min_win_rate,
+        cv_stability_weight=args.cv_stability_weight,
+        max_cv_std=args.max_cv_std,
     )
 
 

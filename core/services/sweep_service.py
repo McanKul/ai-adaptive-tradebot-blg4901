@@ -1,25 +1,37 @@
 """
 core/services/sweep_service.py
 ===============================
-Thin orchestration wrapper for parameter sweeps.
+Parameter-search service.
 
-Composes StrategyFactory + ParameterGrid + Scorer + BacktestEngine.
-Unified parameter sweep service for any registered strategy.
+Composes the existing scoring stack into a single CLI-callable flow:
+
+    SearchSpace (constraints)
+        → ParameterGrid
+        → BatchBacktest (with optional CV: PurgedKFold / WalkForward / CPCV)
+        → Selector (filters + tie-breakers + CV-stability penalty)
+        → ranked top-N + CSV export
+
+Previously the sweep had its own engine-config builder and a hand-rolled
+loop, which duplicated ``BatchBacktest`` (no CV, no failure dummy, no
+selection-bias warning).  This module is now a thin orchestrator over
+:class:`BatchBacktest` so every fix that lands in the batch core also
+lands here.
 """
 from __future__ import annotations
 
 import csv
 import logging
-import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from Backtest.engine import BacktestEngine, EngineConfig
+from Backtest.realism_config import RealismConfig
 from Backtest.runner import BacktestConfig, DataConfig
-from Backtest.scoring.search_space import ParameterGrid
+from Backtest.scoring.batch import BatchBacktest, BatchResult
 from Backtest.scoring.scorer import Scorer
+from Backtest.scoring.search_space import ParameterGrid, SearchSpace
+from Backtest.scoring.selector import Selector, SelectionCriteria
 from Interfaces.metrics_interface import BacktestResult
-from Interfaces.strategy_adapter import SizingConfig, SizingMode
+from Interfaces.strategy_adapter import IBacktestStrategy
 from core.factories.strategy_factory import StrategyFactory
 
 log = logging.getLogger(__name__)
@@ -28,8 +40,53 @@ log = logging.getLogger(__name__)
 RankedResult = Tuple[Dict[str, Any], BacktestResult, float]
 
 
+def _build_search_space(
+    param_grid: Dict[str, List[Any]],
+    constraints: Optional[List[Dict[str, Any]]] = None,
+) -> SearchSpace | ParameterGrid:
+    """Build a ParameterGrid (no constraints) or SearchSpace (with).
+
+    ``constraints`` is a list of dicts, each having ``type`` and
+    type-specific params:
+
+    * ``{type: less_than,    a: <param>, b: <param>}``  → a < b
+    * ``{type: less_equal,   a: <param>, b: <param>}``  → a ≤ b
+    * ``{type: range,        param: <name>, min: x, max: y}``
+    * ``{type: max_leverage, max: <int>}``
+    """
+    if not constraints:
+        return ParameterGrid(param_grid)
+
+    space = SearchSpace()
+    for name, values in param_grid.items():
+        space.add(name, values)
+    for c in constraints:
+        ctype = c.get("type")
+        if ctype == "less_than":
+            space.require_less_than(c["a"], c["b"])
+        elif ctype == "less_equal":
+            space.require_less_equal(c["a"], c["b"])
+        elif ctype == "range":
+            space.require_range(c["param"], c["min"], c["max"])
+        elif ctype == "max_leverage":
+            space.require_max_leverage(c["max"])
+        else:
+            raise ValueError(f"unknown constraint type '{ctype}'")
+    return space
+
+
+def _build_selection_criteria(**kwargs: Any) -> SelectionCriteria:
+    """Filter caller kwargs through SelectionCriteria's known fields."""
+    valid = SelectionCriteria.__dataclass_fields__.keys()
+    return SelectionCriteria(**{k: v for k, v in kwargs.items()
+                                if k in valid and v is not None})
+
+
 class SweepService:
-    """Run a parameter sweep using factory-resolved strategies."""
+    """Run a parameter sweep using BatchBacktest underneath.
+
+    All fields default to safe values; the CLI wires user choices through.
+    """
 
     def run_sweep(
         self,
@@ -45,130 +102,60 @@ class SweepService:
         top_n: int = 15,
         tp_pct: Optional[float] = None,
         sl_pct: Optional[float] = None,
+        # NEW: CV
+        cv_method: str = "none",
+        cv_n_splits: int = 5,
+        cv_embargo_pct: float = 0.01,
+        cv_train_pct: float = 0.6,
+        cv_n_test_splits: int = 2,
+        cv_aggregate: str = "mean",
+        cv_expanding: bool = False,
+        # NEW: realism
+        realism_config_path: Optional[str] = None,
+        # NEW: SearchSpace constraints (list of dicts; see _build_search_space)
+        constraints: Optional[List[Dict[str, Any]]] = None,
+        # NEW: Selector / filters
+        min_trades: Optional[int] = None,
+        min_sharpe: Optional[float] = None,
+        max_drawdown: Optional[float] = None,
+        min_win_rate: Optional[float] = None,
+        cv_stability_weight: Optional[float] = None,
+        max_cv_std: Optional[float] = None,
         **engine_overrides: Any,
     ) -> List[RankedResult]:
-        """
-        Run a parameter sweep over the given grid.
-
-        Args:
-            strategy_name: Registered strategy name.
-            param_grid: ``{param_name: [values]}``.
-            symbol: Trading pair.
-            timeframe: Bar timeframe.
-            capital / leverage / margin_usd: Sizing defaults.
-            data_dir: Tick data directory.
-            csv_output: Optional CSV output path.
-            top_n: Number of top results to print.
-            tp_pct / sl_pct: Engine-level exit params (None = disabled).
-            **engine_overrides: Extra EngineConfig fields.
-
-        Returns:
-            Sorted list of ``(params, result, score)`` tuples (best first).
-        """
-        grid = ParameterGrid(param_grid)
-        all_combos = list(grid)
-        total = len(all_combos)
-
-        strategy_cls = StrategyFactory.resolve_class(strategy_name)
+        """Run a parameter sweep and return ranked results."""
+        # 1) Search space
+        space = _build_search_space(param_grid, constraints)
+        n_combos = len(space)
+        if n_combos == 0:
+            log.warning("Search space is empty after constraints — nothing to sweep")
+            return []
 
         log.info("=" * 80)
         log.info("%s PARAMETER SWEEP", strategy_name)
         log.info("=" * 80)
-        log.info("Symbol: %s | TF: %s | Leverage: %sx | Margin: $%s", symbol, timeframe, leverage, margin_usd)
-        log.info("Total combinations: %d", total)
+        log.info("Symbol: %s | TF: %s | Leverage: %sx | Margin: $%s",
+                 symbol, timeframe, leverage, margin_usd)
+        log.info("Grid: %d combinations (CV=%s)", n_combos, cv_method)
         for k, v in param_grid.items():
             log.info("  %s: %s", k, v)
+        if constraints:
+            log.info("Constraints: %d (filtered out %d combos)",
+                     len(constraints),
+                     space.total_unconstrained() - n_combos
+                     if isinstance(space, SearchSpace) else 0)
         log.info("=" * 80)
 
-        sizing = SizingConfig(
-            mode=SizingMode.MARGIN_USD,
-            margin_usd=margin_usd,
-            leverage=float(leverage),
-            leverage_mode="margin",
-        )
-
-        scorer = Scorer()
-        results: List[RankedResult] = []
-        t0 = time.time()
-
-        for i, params in enumerate(all_combos):
-            try:
-                result = self._run_single(
-                    strategy_cls=strategy_cls,
-                    params=params,
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    capital=capital,
-                    leverage=leverage,
-                    sizing=sizing,
-                    data_dir=data_dir,
-                    tp_pct=tp_pct,
-                    sl_pct=sl_pct,
-                    **engine_overrides,
-                )
-                score = scorer.score(result)
-                results.append((params, result, score))
-
-                log.info(
-                    "[%3d/%d] %s | ret=%+6.2f%% sharpe=%.2f dd=%.1f%% trades=%d wr=%.0f%% | score=%.3f",
-                    i + 1, total,
-                    " ".join(f"{k}={v}" for k, v in params.items()),
-                    result.total_return_pct,
-                    result.sharpe_ratio,
-                    result.max_drawdown * 100,
-                    result.total_trades,
-                    result.win_rate * 100,
-                    score,
-                )
-            except Exception as e:
-                log.error("[%3d/%d] FAILED: %s | %s", i + 1, total, params, e)
-
-        elapsed = time.time() - t0
-
-        # Sort by score descending
-        results.sort(key=lambda x: x[2], reverse=True)
-
-        # CSV export
-        if csv_output:
-            self._write_csv(csv_output, results)
-            log.info("Results saved to %s", csv_output)
-
-        # Print
-        self.print_top_results(results, top_n=top_n)
-
-        if results:
-            self._print_best(results[0])
-
-        avg = elapsed / total if total else 0
-        print(f"\nTotal time: {elapsed:.1f}s ({avg:.1f}s per combo, {total} combos)")
-        if csv_output:
-            print(f"Results CSV: {csv_output}")
-
-        return results
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _run_single(
-        strategy_cls,
-        params: Dict[str, Any],
-        symbol: str,
-        timeframe: str,
-        capital: float,
-        leverage: float,
-        sizing: SizingConfig,
-        data_dir: str,
-        tp_pct: Optional[float] = None,
-        sl_pct: Optional[float] = None,
-        **engine_overrides: Any,
-    ) -> BacktestResult:
+        # 2) BatchBacktest config — reuse DataConfig + BacktestConfig
         data_cfg = DataConfig(
             tick_data_dir=data_dir,
             symbols=[symbol],
             bar_type="time",
             timeframe=timeframe,
+        )
+        realism = (
+            RealismConfig.from_yaml(realism_config_path)
+            if realism_config_path else RealismConfig()
         )
         bt_cfg = BacktestConfig(
             data=data_cfg,
@@ -184,59 +171,138 @@ class SweepService:
             max_position_notional=engine_overrides.pop("max_position_notional", 50_000.0),
             max_daily_loss=engine_overrides.pop("max_daily_loss", capital * 0.5),
             max_drawdown=engine_overrides.pop("max_drawdown", 0.9),
-            enable_tick_exit=engine_overrides.pop("enable_tick_exit", True),
+            close_positions_at_end=engine_overrides.pop("close_positions_at_end", True),
+            random_seed=engine_overrides.pop("random_seed", 42),
             bar_store_maxlen=engine_overrides.pop("bar_store_maxlen", 600),
+            enable_tick_exit=engine_overrides.pop("enable_tick_exit", True),
             tp_pct=tp_pct,
             sl_pct=sl_pct,
+            realism=realism,
         )
 
-        engine_cfg = bt_cfg.to_engine_config()
-        engine = BacktestEngine(engine_cfg)
+        # 3) Strategy factory closure (BatchBacktest expects it)
+        strategy_cls = StrategyFactory.resolve_class(strategy_name)
 
-        strategy = strategy_cls(**params)
-        result = engine.run(strategy, sizing_config=sizing)
-        result.params = params
-        return result
+        def _factory(params: Dict[str, Any]) -> IBacktestStrategy:
+            return strategy_cls(**params)
+
+        batch = BatchBacktest(
+            config=bt_cfg,
+            strategy_factory=_factory,
+            scorer=Scorer(),
+            strategy_name=strategy_name,
+        )
+
+        # 4) Run with or without CV
+        t0 = time.time()
+        if cv_method == "none":
+            batch_result = batch.run(space)
+        else:
+            batch_result = batch.run_with_cv(
+                param_space=space,
+                split_mode=cv_method,
+                n_splits=cv_n_splits,
+                embargo_pct=cv_embargo_pct,
+                train_pct=cv_train_pct,
+                n_test_splits=cv_n_test_splits,
+                aggregate=cv_aggregate,
+            )
+        elapsed = time.time() - t0
+
+        # 5) Selector — filters + tie-breakers + CV stability penalty
+        criteria = _build_selection_criteria(
+            min_trades=min_trades,
+            min_sharpe=min_sharpe,
+            max_drawdown=max_drawdown,
+            min_win_rate=min_win_rate,
+            cv_stability_weight=cv_stability_weight or 0.0,
+            max_cv_std=max_cv_std if max_cv_std is not None else float("inf"),
+        )
+        selector = Selector(criteria)
+        # apply_filters=False when no filter knobs were set, so we still
+        # show the full ranking
+        any_filter = any(v is not None for v in
+                         [min_trades, min_sharpe, max_drawdown, min_win_rate, max_cv_std])
+        ranked = selector.select_top_k(
+            batch_result, k=len(batch_result.results), apply_filters=any_filter,
+        )
+
+        # Reshape to (params, result, score) for backwards compatibility
+        results: List[RankedResult] = [(p, r, s) for r, s, p in ranked]
+
+        # 6) CSV export + print
+        if csv_output:
+            self._write_csv(csv_output, results, cv_method=cv_method)
+            log.info("Results saved to %s", csv_output)
+
+        self.print_top_results(results, top_n=top_n, cv_method=cv_method)
+        if results:
+            self._print_best(results[0], cv_method=cv_method)
+
+        # Selection-bias warning
+        if batch_result.selection_bias_report:
+            batch_result.print_selection_bias_warning()
+
+        avg = elapsed / max(n_combos, 1)
+        cv_label = f" (CV={cv_method})" if cv_method != "none" else ""
+        print(f"\nTotal time: {elapsed:.1f}s "
+              f"({avg:.1f}s per combo, {n_combos} combos{cv_label})")
+        if csv_output:
+            print(f"Results CSV: {csv_output}")
+        if any_filter and len(results) < len(batch_result.results):
+            print(f"Filter dropped {len(batch_result.results) - len(results)} combos")
+
+        return results
 
     # ------------------------------------------------------------------
     # Presentation
     # ------------------------------------------------------------------
 
     @staticmethod
-    def print_top_results(results: List[RankedResult], top_n: int = 15) -> None:
+    def print_top_results(
+        results: List[RankedResult],
+        top_n: int = 15,
+        cv_method: str = "none",
+    ) -> None:
         if not results:
-            print("No results.")
+            print("No results passed the filters.")
             return
 
-        print("\n" + "=" * 110)
-        print(f"TOP {min(top_n, len(results))} PARAMETER COMBINATIONS")
-        print("=" * 110)
+        cv_on = cv_method != "none"
+        print("\n" + "=" * 120)
+        print(f"TOP {min(top_n, len(results))} PARAMETER COMBINATIONS"
+              f"{f'  (CV={cv_method})' if cv_on else ''}")
+        print("=" * 120)
 
-        # Dynamic header from first result's param keys
         param_keys = list(results[0][0].keys())
         param_header = " ".join(f"{k[:8]:>8}" for k in param_keys)
+        cv_col = f" {'CV_std':>7}" if cv_on else ""
         print(
             f"{'#':<4} {param_header} | "
-            f"{'Return':>8} {'Sharpe':>7} {'MaxDD':>6} {'Trades':>6} {'WinR':>5} {'PF':>5} | {'Score':>7}"
+            f"{'Return':>8} {'Sharpe':>7} {'MaxDD':>6} {'Trades':>6} "
+            f"{'WinR':>5} {'PF':>5}{cv_col} | {'Score':>7}"
         )
-        print("-" * 110)
+        print("-" * 120)
 
         for rank, (params, result, score) in enumerate(results[:top_n], 1):
             pvals = " ".join(f"{str(v)[:8]:>8}" for v in params.values())
+            cv_std = (result.metadata or {}).get("cv_score_std", 0.0)
+            cv_str = f" {cv_std:>7.3f}" if cv_on else ""
             print(
                 f"{rank:<4} {pvals} | "
                 f"{result.total_return_pct:>+7.2f}% {result.sharpe_ratio:>7.3f} "
                 f"{result.max_drawdown * 100:>5.1f}% {result.total_trades:>6} "
-                f"{result.win_rate * 100:>4.0f}% {result.profit_factor:>5.2f} | "
-                f"{score:>7.3f}"
+                f"{result.win_rate * 100:>4.0f}% {result.profit_factor:>5.2f}"
+                f"{cv_str} | {score:>7.3f}"
             )
 
     @staticmethod
-    def _print_best(best: RankedResult) -> None:
+    def _print_best(best: RankedResult, cv_method: str = "none") -> None:
         params, result, score = best
-        print("\n" + "=" * 110)
+        meta = result.metadata or {}
+        print("\n" + "=" * 120)
         print("BEST PARAMETERS")
-        print("=" * 110)
+        print("=" * 120)
         for k, v in params.items():
             print(f"  {k}: {v}")
         print("  ---")
@@ -247,31 +313,53 @@ class SweepService:
         print(f"  Win Rate:       {result.win_rate * 100:.1f}%")
         print(f"  Profit Factor:  {result.profit_factor:.3f}")
         print(f"  Score:          {score:.4f}")
+        if cv_method != "none":
+            print(f"  CV folds:       {meta.get('cv_n_folds', '?')}")
+            print(f"  CV mean:        {meta.get('cv_score_mean', 0):.4f}")
+            print(f"  CV std:         {meta.get('cv_score_std', 0):.4f}")
+            print(f"  CV min/max:     {meta.get('cv_score_min', 0):.4f} / "
+                  f"{meta.get('cv_score_max', 0):.4f}")
 
     @staticmethod
-    def _write_csv(path: str, results: List[RankedResult]) -> None:
+    def _write_csv(
+        path: str,
+        results: List[RankedResult],
+        cv_method: str = "none",
+    ) -> None:
         if not results:
             return
         param_keys = list(results[0][0].keys())
-        with open(path, "w", newline="") as f:
+        cv_on = cv_method != "none"
+        with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(
+            base = (
                 ["rank"] + param_keys +
                 ["return_pct", "sharpe", "sortino", "calmar",
                  "max_dd_pct", "trades", "win_rate", "profit_factor", "score"]
             )
+            if cv_on:
+                base += ["cv_score_mean", "cv_score_std",
+                         "cv_score_min", "cv_score_max", "cv_n_folds"]
+            writer.writerow(base)
             for rank, (params, result, score) in enumerate(results, 1):
-                writer.writerow(
-                    [rank] + [params[k] for k in param_keys] +
-                    [
-                        f"{result.total_return_pct:.4f}",
-                        f"{result.sharpe_ratio:.4f}",
-                        f"{result.sortino_ratio:.4f}",
-                        f"{result.calmar_ratio:.4f}",
-                        f"{result.max_drawdown * 100:.2f}",
-                        result.total_trades,
-                        f"{result.win_rate * 100:.1f}",
-                        f"{result.profit_factor:.4f}",
-                        f"{score:.4f}",
+                row = [rank] + [params[k] for k in param_keys] + [
+                    f"{result.total_return_pct:.4f}",
+                    f"{result.sharpe_ratio:.4f}",
+                    f"{result.sortino_ratio:.4f}",
+                    f"{result.calmar_ratio:.4f}",
+                    f"{result.max_drawdown * 100:.2f}",
+                    result.total_trades,
+                    f"{result.win_rate * 100:.1f}",
+                    f"{result.profit_factor:.4f}",
+                    f"{score:.4f}",
+                ]
+                if cv_on:
+                    meta = result.metadata or {}
+                    row += [
+                        f"{meta.get('cv_score_mean', 0):.4f}",
+                        f"{meta.get('cv_score_std', 0):.4f}",
+                        f"{meta.get('cv_score_min', 0):.4f}",
+                        f"{meta.get('cv_score_max', 0):.4f}",
+                        meta.get("cv_n_folds", 0),
                     ]
-                )
+                writer.writerow(row)

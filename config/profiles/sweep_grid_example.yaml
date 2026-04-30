@@ -1,0 +1,44 @@
+# Example sweep parameter grid with SearchSpace constraints + CV.
+#
+# Two formats are supported by `app.py sweep --param-grid`:
+#
+# 1) Flat (legacy):
+#       rsi_period: [14, 21, 28]
+#       threshold:  [0.5, 0.7]
+#    Every cartesian combination is run.
+#
+# 2) Structured (this file):
+#       grid:        the parameter values
+#       constraints: SearchSpace constraints to drop nonsense combos
+#                    before any backtest fires.
+#
+# Constraint types:
+#   {type: less_than,    a: <param>, b: <param>}    → a <  b
+#   {type: less_equal,   a: <param>, b: <param>}    → a <= b
+#   {type: range,        param: <name>, min: x, max: y}
+#   {type: max_leverage, max: <int>}
+#
+# Demo invocation (full pipeline — sweep + walk-forward CV + filters):
+#
+#   python app.py sweep \
+#     --strategy RSIThreshold \
+#     --symbol BTCUSDT --timeframe 1h \
+#     --param-grid config/profiles/sweep_grid_example.yaml \
+#     --realism-config example_realism_config.yaml \
+#     --cv-method walk_forward --cv-n-splits 5 --cv-embargo-pct 0.01 \
+#     --min-trades 20 --min-sharpe 0.3 --max-dd 0.25 \
+#     --cv-stability-weight 0.5 \
+#     --csv-output logs/rsi_sweep.csv --top-n 10
+
+grid:
+  rsi_period:     [10, 14, 21, 28]
+  rsi_oversold:   [20, 25, 30, 35]
+  rsi_overbought: [60, 65, 70, 75, 80]
+
+constraints:
+  # Drop combos where the lower band crosses the upper band.
+  - {type: less_than, a: rsi_oversold, b: rsi_overbought}
+
+  # Optional: enforce a sane minimum gap between bands so we don't waste
+  # CV budget on near-degenerate cases (uncomment to use).
+  # - {type: range, param: rsi_period, min: 10, max: 28}
