@@ -94,6 +94,7 @@ class LiveEngine:
         # ── Streamer ───────────────────────────────────────────────────
         self.timeframes = [cfg.timeframe]
         self.streamer: Optional[Streamer] = None
+        self.tick_streamer = None  # MarkPriceTickStreamer, set in run()
         self.symbols: list[str] = []
 
         # ── Equity Cache (avoid API call every bar) ────────────────────
@@ -242,6 +243,23 @@ class LiveEngine:
         # 9) Prefetch news sentiment (if enabled)
         if self.news_engine:
             await self.news_engine.prefetch_symbols(self.symbols)
+
+        # 10a) Tick streamer for intra-bar exits (trailing/time/USD-target).
+        # Server-side STOP_MARKET / TAKE_PROFIT_MARKET handle plain TP/SL;
+        # this stream is dedicated to local-only exit rules.  Failure to
+        # start does not abort the engine — strategy entries still run.
+        try:
+            from live.tick_stream import MarkPriceTickStreamer
+            self.tick_streamer = MarkPriceTickStreamer(
+                client=self._market_client,
+                symbols=self.symbols,
+                on_tick=self.supervisor.on_tick,
+                source="mark",
+            )
+            await self.tick_streamer.start()
+        except Exception as e:
+            log.warning("tick streamer disabled: %s", e)
+            self.tick_streamer = None
 
         # 10) Flush buffered WS bars → bar_store + queue (dedup handles overlaps)
         self.streamer.flush_buffer()
@@ -416,6 +434,11 @@ class LiveEngine:
                         )
 
         finally:
+            if self.tick_streamer:
+                try:
+                    await self.tick_streamer.stop()
+                except Exception:
+                    pass
             await self.streamer.stop()
             log.info("LiveEngine stopped")
 
@@ -437,6 +460,12 @@ class LiveEngine:
         log.info("═══ FINAL SESSION METRICS ═══")
         self.metrics._log_summary()
         log.info("Trade log saved to: %s", self.metrics._csv_path)
+
+        if self.tick_streamer:
+            try:
+                await self.tick_streamer.stop()
+            except Exception:
+                pass
 
         if self.streamer:
             try:

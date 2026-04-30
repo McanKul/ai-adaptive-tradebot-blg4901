@@ -421,6 +421,108 @@ class PositionManager:
         for key in closed_keys:
             del self.open_positions[key]
 
+    # ------------------------------------------------------------------
+    # Tick-level exits (intra-bar)
+    # ------------------------------------------------------------------
+    async def check_tick_exits(self, symbol: str, tick_price: float) -> List[str]:
+        """Run local-only exit checks at tick granularity.
+
+        Called by ``LiveEngine`` whenever the mark-price tick stream
+        produces a new price for *symbol*.  Server-side ``STOP_MARKET``
+        / ``TAKE_PROFIT_MARKET`` orders cover plain TP/SL at the
+        exchange, so this method **deliberately skips** flat TP/SL
+        triggers (they would race the server-side fills and cause
+        double-close attempts).  It evaluates only the rules that the
+        exchange cannot run for us:
+
+        * **Trailing stop** — peak update is now per-tick instead of
+          per-bar, which is a real correctness fix as well as a speed
+          fix.
+        * **Max-holding (time-based)** — uses wall-clock seconds so
+          we don't have to wait for a bar boundary to release a stale
+          position.
+        * **USD-target exit** — ``take_profit_usd`` / ``stop_loss_usd``
+          on the local ``ExitConfig`` if set.
+
+        Returns the list of strategy keys that closed during this call
+        (mostly for tests; production callers can ignore it).
+        """
+        closed: List[str] = []
+        now = time.time()
+        for key, pos in list(self.open_positions.items()):
+            sym, strat = key
+            if sym != symbol or pos.closed:
+                continue
+
+            exit_type = self._check_local_exit_tick(pos, tick_price, now)
+            if exit_type is None:
+                continue
+
+            log.info(
+                "%s [%s] tick-exit: %s @ %.8f",
+                sym, strat, exit_type, tick_price,
+            )
+            try:
+                await self.broker.close_position(sym)
+                await self._cancel_position_orders(pos)
+            except Exception as e:
+                log.error("%s tick-exit close failed: %s", sym, e)
+                continue
+
+            pos.closed = True
+            pos.exit_ts = now
+            pos.exit = tick_price
+            pos.exit_type = exit_type
+            self.history.append(pos)
+            del self.open_positions[key]
+            closed.append(strat)
+        return closed
+
+    def _check_local_exit_tick(
+        self,
+        pos: Position,
+        tick_price: float,
+        now: float,
+    ) -> Optional[str]:
+        """Local-only exit rules suitable for tick granularity.
+
+        Skips flat TP/SL since the exchange's ``STOP_MARKET`` /
+        ``TAKE_PROFIT_MARKET`` orders handle those at higher fidelity.
+        """
+        ecfg = self.exit_cfg
+
+        # --- Trailing stop (peak updated per-tick) ---
+        if ecfg.trailing_stop_pct is not None:
+            pos.update_peak(tick_price)
+            if pos.peak_pnl > 0:
+                current_pnl = pos.unrealized_pnl(tick_price)
+                notional = pos.entry * pos.qty
+                if notional > 0:
+                    peak_pct = pos.peak_pnl / notional
+                    curr_pct = current_pnl / notional
+                    drawdown = peak_pct - curr_pct
+                    leverage = self.sizing_cfg.leverage if self.sizing_cfg.leverage > 0 else 1
+                    trail_pct = ecfg.trailing_stop_pct / leverage
+                    if drawdown >= trail_pct:
+                        return "TRAILING"
+
+        # --- USD-target exits (the exchange has no equivalent) ---
+        tp_usd = getattr(ecfg, "take_profit_usd", None)
+        sl_usd = getattr(ecfg, "stop_loss_usd", None)
+        if tp_usd or sl_usd:
+            pnl = pos.unrealized_pnl(tick_price)
+            if tp_usd and pnl >= tp_usd:
+                return "TP_USD"
+            if sl_usd and pnl <= -sl_usd:
+                return "SL_USD"
+
+        # --- Wall-clock max-holding ---
+        max_hold_s = getattr(ecfg, "max_holding_seconds", None)
+        if max_hold_s and (now - pos.open_ts) >= max_hold_s:
+            return "MAX_HOLD_S"
+
+        return None
+
     async def _cancel_position_orders(self, pos: Position):
         """Cancel SL and TP orders by their tracked IDs only."""
         cancelled = 0
@@ -643,6 +745,22 @@ class LiveSupervisor:
         if pm is None:
             return 0.0
         return pm.position_qty(symbol)
+
+    async def on_tick(self, symbol: str, tick_price: float, ts_ms: int = 0) -> None:
+        """Forward a mark-price tick to the symbol's PositionManager.
+
+        Wired by ``LiveEngine`` to ``MarkPriceTickStreamer`` so trailing
+        stops, USD-target exits, and time-based exits run intra-bar
+        instead of waiting for the next bar close.  Server-side
+        ``STOP_MARKET``/``TAKE_PROFIT_MARKET`` orders still cover
+        plain TP/SL — see ``PositionManager.check_tick_exits``.
+        """
+        pm = self._managers.get(symbol)
+        if pm is None:
+            return
+        closed = await pm.check_tick_exits(symbol, tick_price)
+        if closed:
+            self._persist()
 
     def _persist(self):
         """Save all open positions to disk."""
