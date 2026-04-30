@@ -81,6 +81,49 @@ class TestAppCLI(unittest.TestCase):
     def test_sweep_missing_args_fails(self):
         r = self._run("sweep", expect_rc=2)
 
+    # ── CV / walk-forward subcommands ────────────────────────────────
+
+    def test_no_args_shows_walk_forward(self):
+        r = self._run(expect_rc=0)
+        self.assertIn("walk-forward", r.stdout)
+
+    def test_backtest_help_shows_cv_flags(self):
+        r = self._run("backtest", "--help", expect_rc=0)
+        for flag in ("--cv-method", "--cv-n-splits", "--cv-embargo-pct",
+                     "--cv-aggregate", "--cv-expanding"):
+            self.assertIn(flag, r.stdout)
+
+    def test_walk_forward_help(self):
+        r = self._run("walk-forward", "--help", expect_rc=0)
+        self.assertIn("--strategy", r.stdout)
+        self.assertIn("--n-splits", r.stdout)
+        self.assertIn("--train-pct", r.stdout)
+
+    def test_cv_method_choices_validated(self):
+        r = self._run("backtest", "--strategy", "RSIThreshold",
+                      "--cv-method", "bogus", expect_rc=2)
+        self.assertIn("invalid choice", r.stderr.lower())
+
+
+class TestCvServiceUnit(unittest.TestCase):
+    """Unit-level checks for BacktestService CV plumbing."""
+
+    def test_run_with_cv_signature(self):
+        from core.services.backtest_service import BacktestService
+        svc = BacktestService()
+        self.assertTrue(callable(getattr(svc, "run_with_cv", None)))
+        self.assertTrue(callable(getattr(svc, "print_cv_result", None)))
+
+    def test_print_cv_result_handles_empty(self):
+        from core.services.backtest_service import BacktestService
+        from Backtest.scoring.batch import BatchResult
+        empty = BatchResult(
+            results=[], scores=[], params_list=[], rankings=[],
+            total_time_seconds=0.0,
+        )
+        # Should not raise
+        BacktestService.print_cv_result(empty, symbol="BTCUSDT")
+
 
 if __name__ == "__main__":
     unittest.main()
