@@ -193,9 +193,12 @@ class TestSupervisorOnTick(unittest.IsolatedAsyncioTestCase):
         # Substitute a fake PM that records tick calls
         fake_pm = MagicMock()
         fake_pm.check_tick_exits = AsyncMock(return_value=[])
+        # on_tick now also runs the liquidation guard before tick exits
+        fake_pm.check_liquidation_warning = AsyncMock(return_value=[])
         sup._managers["BTCUSDT"] = fake_pm
 
         await sup.on_tick("BTCUSDT", 100.0, ts_ms=123)
+        fake_pm.check_liquidation_warning.assert_awaited_once_with("BTCUSDT", 100.0)
         fake_pm.check_tick_exits.assert_awaited_once_with("BTCUSDT", 100.0)
 
     async def test_unknown_symbol_is_noop(self):

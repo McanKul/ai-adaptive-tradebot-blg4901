@@ -78,6 +78,10 @@ class Position:
         self.peak_price = entry_price
         self.peak_pnl: float = 0.0
 
+        # Liquidation early-warning bookkeeping
+        # Set by ``PositionManager.open()`` once leverage / MMR are known.
+        self.liq_price: Optional[float] = None
+
         # Throttle for exchange-side fill checks
         self._last_exchange_check: float = 0.0
 
@@ -125,10 +129,14 @@ class PositionManager:
         exit_cfg: ExitConfig,
         max_concurrent: int = 3,
         symbol: Optional[str] = None,
+        liq_guard_cfg: Optional[Any] = None,
     ):
         self.broker = broker
         self.sizing_cfg = sizing_cfg
         self.exit_cfg = exit_cfg
+        # Optional ``LiquidationGuardConfig``; when None the guard is off
+        # and the tick checker short-circuits.
+        self.liq_guard_cfg = liq_guard_cfg
         self.max_open = max_concurrent
         self.symbol: Optional[str] = symbol
 
@@ -336,6 +344,7 @@ class PositionManager:
         )
         pos.sl_order_id = sl_order_id
         pos.tp_order_id = tp_order_id
+        self.assign_liq_price(pos)
         self.open_positions[key] = pos
 
         log.info(
@@ -420,6 +429,117 @@ class PositionManager:
 
         for key in closed_keys:
             del self.open_positions[key]
+
+    # ------------------------------------------------------------------
+    # Liquidation early-warning
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def compute_liq_price(
+        side: str,
+        entry_price: float,
+        leverage: float,
+        maintenance_margin_ratio: float,
+    ) -> float:
+        """Approximate Binance USDT-M cross-margin liquidation price.
+
+        Long:  ``liq = entry * (1 - 1/leverage + mmr)``
+        Short: ``liq = entry * (1 + 1/leverage - mmr)``
+
+        This is a *first-order* estimate — the real liquidation engine
+        looks at maintenance margin tiers (notional-dependent) and the
+        wallet's cross balance.  For the early-warning use-case we
+        only need a price within ~1 % of the true level so we can
+        bail out before the engine hits us.  The 1% accuracy is well
+        inside the ``buffer_pct`` cushion the user picks.
+        """
+        if leverage <= 0 or entry_price <= 0:
+            return 0.0
+        if side == SIDE_BUY:  # long
+            return entry_price * max(0.0, 1.0 - 1.0 / leverage + maintenance_margin_ratio)
+        # short
+        return entry_price * (1.0 + 1.0 / leverage - maintenance_margin_ratio)
+
+    def assign_liq_price(self, pos: Position) -> None:
+        """Compute and store the liquidation price on a freshly-opened
+        position.  Idempotent — reassigning is safe when leverage or MMR
+        changes mid-life (rare)."""
+        if self.liq_guard_cfg is None:
+            return
+        leverage = self.sizing_cfg.leverage if self.sizing_cfg.leverage > 0 else 1.0
+        mmr = self.liq_guard_cfg.maintenance_margin_ratio
+        pos.liq_price = self.compute_liq_price(
+            pos.side, pos.entry, leverage, mmr,
+        )
+
+    async def check_liquidation_warning(
+        self, symbol: str, tick_price: float,
+    ) -> List[str]:
+        """Pre-emptive close if mark price is uncomfortably close to liq.
+
+        Called by ``on_tick``.  Skips if the guard is disabled or no
+        position has a recorded ``liq_price``.  Returns the list of
+        strategy keys that closed during this call.
+
+        Trigger rule:
+            ``distance_to_liq / abs(entry - liq) < buffer_pct``
+
+        i.e. we have less than ``buffer_pct`` of the original safety
+        margin remaining.  Default buffer is 0.20 → close once we are
+        within the last 20 % of the cushion.
+        """
+        cfg = self.liq_guard_cfg
+        if cfg is None or not cfg.enabled:
+            return []
+
+        closed: List[str] = []
+        now = time.time()
+        for key, pos in list(self.open_positions.items()):
+            sym, strat = key
+            if sym != symbol or pos.closed or pos.liq_price is None:
+                continue
+
+            # Both sides: distance is positive when we're alive.
+            if pos.is_long:
+                distance = tick_price - pos.liq_price
+                cushion = pos.entry - pos.liq_price
+            else:
+                distance = pos.liq_price - tick_price
+                cushion = pos.liq_price - pos.entry
+
+            if cushion <= 0:
+                # Should not happen with sensible inputs; bail to be safe.
+                continue
+
+            ratio = distance / cushion
+            if ratio >= cfg.buffer_pct:
+                continue
+
+            log.error(
+                "%s [%s] LIQ-WARN price=%.8f liq=%.8f cushion=%.4f "
+                "remaining=%.1f%% (buffer=%.1f%%) action=%s",
+                sym, strat, tick_price, pos.liq_price, cushion,
+                ratio * 100.0, cfg.buffer_pct * 100.0, cfg.action,
+            )
+
+            if cfg.action == "alarm":
+                continue
+
+            try:
+                await self.broker.close_position(sym)
+                await self._cancel_position_orders(pos)
+            except Exception as e:
+                log.error("%s liq-guard close failed: %s", sym, e)
+                continue
+
+            pos.closed = True
+            pos.exit_ts = now
+            pos.exit = tick_price
+            pos.exit_type = "LIQ_GUARD"
+            self.history.append(pos)
+            del self.open_positions[key]
+            closed.append(strat)
+        return closed
 
     # ------------------------------------------------------------------
     # Tick-level exits (intra-bar)
@@ -704,12 +824,15 @@ class LiveSupervisor:
     """
 
     def __init__(self, broker: IBroker, persist_path: str = "logs/live_positions.json",
-                 max_global_positions: int = 2):
+                 max_global_positions: int = 2,
+                 liq_guard_cfg: Optional[Any] = None):
         self.broker = broker
         self._managers: Dict[str, PositionManager] = {}
         self.history: List[Position] = []
         self._store = PositionStore(path=persist_path)
         self._max_global_positions = max_global_positions
+        # Forwarded to every PositionManager registered below.
+        self.liq_guard_cfg = liq_guard_cfg
 
     def register_symbol(
         self,
@@ -726,6 +849,7 @@ class LiveSupervisor:
                 exit_cfg=exit_cfg,
                 max_concurrent=max_concurrent,
                 symbol=symbol,
+                liq_guard_cfg=self.liq_guard_cfg,
             )
             self._managers[symbol] = pm
 
@@ -831,12 +955,24 @@ class LiveSupervisor:
         instead of waiting for the next bar close.  Server-side
         ``STOP_MARKET``/``TAKE_PROFIT_MARKET`` orders still cover
         plain TP/SL — see ``PositionManager.check_tick_exits``.
+
+        Order of operations on every tick:
+
+        1. **Liquidation guard** runs FIRST — emergency pre-emptive
+           close beats every other rule because the alternative is the
+           exchange's auto-liquidation engine.
+        2. Local exit rules (trailing / USD targets / time-based).
+
+        Both run in sequence so a single tick can liq-close *and*
+        prune any other positions on the same symbol.  Persistence
+        fires once if anything closed.
         """
         pm = self._managers.get(symbol)
         if pm is None:
             return
-        closed = await pm.check_tick_exits(symbol, tick_price)
-        if closed:
+        liq_closed = await pm.check_liquidation_warning(symbol, tick_price)
+        tick_closed = await pm.check_tick_exits(symbol, tick_price)
+        if liq_closed or tick_closed:
             self._persist()
 
     def _persist(self):

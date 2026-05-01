@@ -150,6 +150,42 @@ class GlobalRiskConfig:
 
 
 # ---------------------------------------------------------------------------
+# Liquidation early-warning guard
+# ---------------------------------------------------------------------------
+@dataclass
+class LiquidationGuardConfig:
+    """Pre-emptive close before the exchange auto-liquidates.
+
+    Real-money safety net.  When the mark-price tick stream brings the
+    price within ``buffer_pct`` of the position's liquidation price we
+    close the position ourselves, paying market-taker slippage instead
+    of the much larger ADL/liquidation penalty (Binance closes at
+    bankruptcy price plus a clearing fee — typically 1–3 % vs the
+    fraction of a percent we eat with a market exit).
+
+    Attributes:
+        enabled: Master switch.  Off by default; turn on when going
+            real-money on margin (above 1×).
+        buffer_pct: Trigger threshold expressed as a fraction of the
+            initial entry-to-liquidation distance.  ``0.20`` ⇒ close
+            once we are within the last 20 % of the safety margin.
+            Lower = closer to liquidation, higher = earlier exit.
+        maintenance_margin_ratio: Override exchange MMR.  Binance
+            USDT-M tier-0 is ~0.5 % (0.005); we default to a slightly
+            conservative 0.01 to absorb tier shifts.  Set per real
+            account from the exchange's risk-parameters page if
+            trading large notional.
+        action: ``"close"`` (default) closes via market reduce-only
+            and trips the kill switch.  ``"alarm"`` only logs +
+            Telegram (debugging mode — DO NOT use with real money).
+    """
+    enabled: bool = False
+    buffer_pct: float = 0.20
+    maintenance_margin_ratio: float = 0.01
+    action: str = "close"
+
+
+# ---------------------------------------------------------------------------
 # Position reconciliation (drift detection)
 # ---------------------------------------------------------------------------
 @dataclass
@@ -251,6 +287,7 @@ class LiveConfig:
     global_risk: GlobalRiskConfig = field(default_factory=GlobalRiskConfig)
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
     reconciliation: ReconciliationConfig = field(default_factory=ReconciliationConfig)
+    liquidation_guard: LiquidationGuardConfig = field(default_factory=LiquidationGuardConfig)
 
     # API
     testnet: bool = False
@@ -333,6 +370,7 @@ class LiveConfig:
         gr_d = d.get("global_risk", {})
         rl_d = d.get("rate_limit", {})
         recon_d = d.get("reconciliation", {})
+        liq_d = d.get("liquidation_guard", {})
 
         def _pick(cls, src):
             return cls(**{k: v for k, v in src.items()
@@ -364,6 +402,7 @@ class LiveConfig:
             global_risk=_pick(GlobalRiskConfig, gr_d),
             rate_limit=_pick(RateLimitConfig, rl_d),
             reconciliation=_pick(ReconciliationConfig, recon_d),
+            liquidation_guard=_pick(LiquidationGuardConfig, liq_d),
             testnet=api_d.get("testnet", False),
         )
 

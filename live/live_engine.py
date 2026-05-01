@@ -89,6 +89,7 @@ class LiveEngine:
             broker,
             max_global_positions=cfg.risk.max_concurrent_positions,
             persist_path=cfg.positions_state_path(),
+            liq_guard_cfg=getattr(cfg, "liquidation_guard", None),
         )
 
         # ── Streamer ───────────────────────────────────────────────────
