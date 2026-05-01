@@ -288,6 +288,22 @@ class Streamer(IStreamer):
     async def get(self):
         return await self.queue.get()
 
+    # Phase E1 — heartbeat-age accessor for the entry gate.
+    @property
+    def seconds_since_last_message(self) -> float:
+        """Seconds since the last WS message.
+
+        ``+inf`` if the streamer has not received anything yet (still
+        warming up or never connected).  ``LiveEngine`` reads this
+        before submitting a new entry so we don't trade on a frozen
+        feed.  Note: the value is monotonic-clock based (matches the
+        heartbeat timer) — never wall clock — so it survives clock
+        drift.
+        """
+        if self._last_msg_time <= 0:
+            return float("inf")
+        return time.monotonic() - self._last_msg_time
+
     @property
     def reconnect_count(self) -> int:
         return self._reconnect_count

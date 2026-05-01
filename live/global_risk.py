@@ -43,6 +43,9 @@ class LiveGlobalRisk:
         self._peak_equity: float = 0.0
         self._kill_switch: bool = False
         self._kill_reason: str = ""
+        # Phase A3 — consecutive-loss cooldown state (persisted)
+        self._consecutive_losses: int = 0
+        self._cooldown_until_ts: float = 0.0
         self._load()
 
     # ---- persistence ----
@@ -60,7 +63,11 @@ class LiveGlobalRisk:
                 self._peak_equity = d.get("peak_equity", 0.0)
                 self._kill_switch = d.get("kill_switch", False)
                 self._kill_reason = d.get("kill_reason", "")
-                log.info("Loaded risk state: day=%s pnl=%.2f", today, self._daily_pnl)
+                self._consecutive_losses = int(d.get("consecutive_losses", 0))
+                self._cooldown_until_ts = float(d.get("cooldown_until_ts", 0.0))
+                log.info("Loaded risk state: day=%s pnl=%.2f cooldown_until=%s",
+                         today, self._daily_pnl,
+                         self._cooldown_until_ts if self._cooldown_until_ts else "-")
             else:
                 log.info("Risk state is from %s, resetting for today.", d.get("day"))
         except Exception as e:
@@ -75,6 +82,8 @@ class LiveGlobalRisk:
             "peak_equity": round(self._peak_equity, 4),
             "kill_switch": self._kill_switch,
             "kill_reason": self._kill_reason,
+            "consecutive_losses": self._consecutive_losses,
+            "cooldown_until_ts": round(self._cooldown_until_ts, 3),
         }
         try:
             with open(self._path, "w", encoding="utf-8") as f:
@@ -99,7 +108,32 @@ class LiveGlobalRisk:
 
     # ---- record ----
     def record_pnl(self, pnl: float):
+        """Record a closed-trade P&L.
+
+        Updates the daily counter and the consecutive-loss state used
+        by the cooldown circuit-breaker (Phase A3):
+
+        * Loss (``pnl < 0``) increments the streak counter.  When the
+          streak hits ``cfg.cooldown_after_losses`` the timer is set
+          to ``now + cfg.cooldown_seconds``.
+        * Win (``pnl > 0``) resets the streak counter (a single
+          winner ends the cooldown's accrual; the live timer keeps
+          ticking until expiry).
+        """
         self._daily_pnl += pnl
+        if pnl < 0:
+            self._consecutive_losses += 1
+            if (self.cfg.cooldown_after_losses > 0
+                    and self._consecutive_losses >= self.cfg.cooldown_after_losses):
+                self._cooldown_until_ts = time.time() + float(self.cfg.cooldown_seconds)
+                log.warning(
+                    "Cooldown armed: %d consecutive losses → halt entries for %ds",
+                    self._consecutive_losses, self.cfg.cooldown_seconds,
+                )
+        elif pnl > 0:
+            if self._consecutive_losses:
+                log.info("Loss streak reset (was %d)", self._consecutive_losses)
+            self._consecutive_losses = 0
         self._save()
 
     # ---- checks ----
@@ -133,7 +167,40 @@ class LiveGlobalRisk:
         if self._kill_switch:
             return False, f"kill switch: {self._kill_reason}"
 
-        # Daily loss USD (checked by LiveRiskChecker too, but this is the persistent version)
+        # ── Phase A1: daily-loss circuit breaker ──────────────────────
+        # USD threshold trips the kill switch so the bot stays halted
+        # for the rest of the UTC day (counter resets in set_start_equity
+        # on the next day's first heartbeat).
+        if self.cfg.max_daily_loss > 0 and -self._daily_pnl >= self.cfg.max_daily_loss:
+            self._kill_switch = True
+            self._kill_reason = (
+                f"daily loss {-self._daily_pnl:.2f} USD >= "
+                f"{self.cfg.max_daily_loss:.2f} USD limit"
+            )
+            self._save()
+            return False, self._kill_reason
+        if (self.cfg.max_daily_loss_pct > 0 and self._start_equity > 0
+                and -self._daily_pnl >= self._start_equity * self.cfg.max_daily_loss_pct):
+            pct = -self._daily_pnl / self._start_equity
+            self._kill_switch = True
+            self._kill_reason = (
+                f"daily loss {pct:.2%} >= "
+                f"{self.cfg.max_daily_loss_pct:.2%} of start equity"
+            )
+            self._save()
+            return False, self._kill_reason
+
+        # ── Phase A3: consecutive-loss cooldown ───────────────────────
+        # Soft block — does NOT trip kill switch.  When the timer
+        # expires this branch is silently skipped → automatic resume
+        # without manual intervention (user requirement).
+        if self._cooldown_until_ts and time.time() < self._cooldown_until_ts:
+            remaining = int(self._cooldown_until_ts - time.time())
+            return False, (
+                f"cooldown active: {self._consecutive_losses} consecutive losses, "
+                f"{remaining}s remaining"
+            )
+
         # Drawdown from peak equity
         if self._peak_equity > 0:
             dd = (self._peak_equity - current_equity) / self._peak_equity
@@ -150,11 +217,11 @@ class LiveGlobalRisk:
                 f"{self.cfg.max_total_exposure_usd:.2f}"
             )
 
-        # Correlated positions
-        if open_position_count >= self.cfg.max_correlated_positions:
+        # Concurrent positions cap (legacy field name was max_correlated_*)
+        if open_position_count >= self.cfg.max_concurrent_positions:
             return False, (
-                f"correlated positions {open_position_count} >= "
-                f"{self.cfg.max_correlated_positions}"
+                f"concurrent positions {open_position_count} >= "
+                f"{self.cfg.max_concurrent_positions}"
             )
 
         return True, ""

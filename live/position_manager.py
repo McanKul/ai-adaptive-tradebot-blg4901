@@ -82,6 +82,23 @@ class Position:
         # Set by ``PositionManager.open()`` once leverage / MMR are known.
         self.liq_price: Optional[float] = None
 
+        # Phase B2 — execution-quality bookkeeping.  ``intended_price``
+        # is captured at signal time (mark) before any rounding;
+        # ``fill_price`` lands once the fill confirmation polling in
+        # Phase C1 reports the broker's avg fill.  Until C1 they are
+        # equal so ``slippage_bps`` is 0 and the abort branch silent.
+        self.intended_price: float = entry_price
+        self.fill_price: Optional[float] = None
+        self.slippage_bps: Optional[float] = None
+
+        # Phase B4 — fee / funding accounting.  Populated by
+        # ``LiveMetrics.record`` from broker fill data and funding
+        # payment history (best-effort; broker errors leave them at
+        # 0 so the gross PnL still gets logged).
+        self.entry_fee_usd: float = 0.0
+        self.exit_fee_usd: float = 0.0
+        self.funding_usd: float = 0.0
+
         # Throttle for exchange-side fill checks
         self._last_exchange_check: float = 0.0
 
@@ -130,6 +147,8 @@ class PositionManager:
         max_concurrent: int = 3,
         symbol: Optional[str] = None,
         liq_guard_cfg: Optional[Any] = None,
+        execution_cfg: Optional[Any] = None,
+        book_streamer: Optional[Any] = None,
     ):
         self.broker = broker
         self.sizing_cfg = sizing_cfg
@@ -137,6 +156,10 @@ class PositionManager:
         # Optional ``LiquidationGuardConfig``; when None the guard is off
         # and the tick checker short-circuits.
         self.liq_guard_cfg = liq_guard_cfg
+        # Phase B1 — execution policy (spread filter, slippage budget, ...)
+        # and the bookTicker streamer used to read live bid/ask.
+        self.execution_cfg = execution_cfg
+        self.book_streamer = book_streamer
         self.max_open = max_concurrent
         self.symbol: Optional[str] = symbol
 
@@ -160,10 +183,15 @@ class PositionManager:
         factor = 1 / tick
         return (math.ceil if up else math.floor)(raw * factor) / factor
 
-    async def _symbol_filters(self, symbol: str, qty_f: float) -> tuple[float, float]:
-        """Query exchange LOT_SIZE & PRICE_FILTER for *symbol* (cached).
-        Returns (rounded_qty, tick_size). Falls back to (qty_f, 0.0) if
-        filters are unavailable (e.g. DryBroker or exchange_info error).
+    async def _symbol_filters(
+        self, symbol: str, qty_f: float,
+    ) -> tuple[float, float, Optional[float]]:
+        """Query exchange LOT_SIZE / PRICE_FILTER / MIN_NOTIONAL.
+
+        Returns ``(rounded_qty, tick_size, min_notional_usd)``.
+        ``min_notional_usd`` may be ``None`` when the exchange does
+        not advertise the filter or for stub brokers (DryBroker).
+        Falls back to ``(qty_f, 0.0, None)`` on any error.
         """
         try:
             if hasattr(self.broker, 'exchange_info'):
@@ -171,6 +199,7 @@ class PositionManager:
             else:
                 info = await self.broker.client.futures_exchange_info()
             step = tick = None
+            min_notional: Optional[float] = None
             for s in info["symbols"]:
                 if s["symbol"] == symbol:
                     for f in s["filters"]:
@@ -178,16 +207,24 @@ class PositionManager:
                             lot = float(f["stepSize"])
                             factor = 1 / lot
                             step = math.floor(qty_f * factor) / factor
-                        if f["filterType"] == "PRICE_FILTER":
+                        elif f["filterType"] == "PRICE_FILTER":
                             tick = float(f["tickSize"])
+                        elif f["filterType"] == "MIN_NOTIONAL":
+                            # Binance USDT-M futures uses ``notional``;
+                            # spot uses ``minNotional``.  Accept either.
+                            raw = f.get("notional") or f.get("minNotional")
+                            if raw is not None:
+                                try:
+                                    min_notional = float(raw)
+                                except (TypeError, ValueError):
+                                    min_notional = None
                     if tick is not None and step is not None:
-                        return step, tick
-            # Symbol not found in exchange info — use raw qty (e.g. DryBroker)
+                        return step, tick, min_notional
             log.debug("%s not found in exchange_info, using raw qty=%.6f", symbol, qty_f)
-            return qty_f, 0.0
+            return qty_f, 0.0, None
         except Exception as e:
             log.error("Failed to get LOT_SIZE/PRICE_FILTER %s: %s", symbol, e)
-            return qty_f, 0.0
+            return qty_f, 0.0, None
 
     # ------------------------------------------------------------------
     # Compute SL / TP prices
@@ -289,15 +326,50 @@ class PositionManager:
         if key in self.open_positions or len(self.open_positions) >= self.max_open:
             return False
 
-        # 1) Get mark price (via broker — rate limited + cached)
+        # ── Phase B1: spread filter (default-deny) ────────────────────
+        # Reject when the live bookTicker spread is wider than the
+        # configured max OR when no tick has arrived yet (we don't
+        # send orders into an opaque market).  Disabled by setting
+        # ``max_entry_spread_bps`` to 0.
+        max_spread = float(getattr(self.execution_cfg, "max_entry_spread_bps", 0.0) or 0.0)
+        if max_spread > 0 and self.book_streamer is not None:
+            spread_bps = self.book_streamer.get_spread_bps(symbol)
+            if spread_bps is None:
+                log.warning("%s [%s] entry blocked — no bookTicker yet (spread filter on)",
+                            symbol, strategy_name)
+                return False
+            if spread_bps > max_spread:
+                log.info("%s [%s] entry blocked — spread %.2fbps > %.2fbps",
+                         symbol, strategy_name, spread_bps, max_spread)
+                return False
+
+        # 1) Get mark price (via broker — rate limited + cached).
+        # This is the ``intended price`` we'll compare the actual fill
+        # against in Phase B2 once C1 (fill confirmation) lands.
         mark_price = await self.broker.get_mark_price(symbol)
+        intended_price = mark_price
 
         # 2) Compute quantity from SizingConfig
         raw_qty = self.sizing_cfg.compute_qty(mark_price)
-        qty, tick = await self._symbol_filters(symbol, raw_qty)
+        qty, tick, min_notional = await self._symbol_filters(symbol, raw_qty)
         if qty <= 0:
             log.warning("%s qty rounded to 0 — skipping", symbol)
             return False
+
+        # Phase B3 — MIN_NOTIONAL filter.  Binance silently rejects
+        # orders below the symbol's min notional; we surface the
+        # rejection up front and skip the trade rather than letting
+        # the broker raise on submit.
+        if min_notional is not None:
+            order_notional = qty * mark_price
+            if order_notional < min_notional:
+                log.warning(
+                    "%s [%s] entry blocked — notional %.4f USD < min %.4f USD "
+                    "(qty=%.6f price=%.6f)",
+                    symbol, strategy_name, order_notional, min_notional,
+                    qty, mark_price,
+                )
+                return False
 
         side_str = SIDE_BUY if side == 1 else SIDE_SELL
         opp_str = SIDE_SELL if side_str == SIDE_BUY else SIDE_BUY
@@ -313,11 +385,27 @@ class PositionManager:
         # 4) Compute SL/TP prices from ExitConfig
         sl_price, tp_price = self._compute_sl_tp_prices(side_str, mark_price, tick)
 
-        # 5) Place orders — capture exchange order IDs
+        # 5) Place orders — capture exchange order IDs.  Phase C1
+        # introduces fill-confirmation polling: we now treat the
+        # broker response's order_id as a handle and wait until the
+        # exchange confirms FILLED (or PARTIAL_FILLED + timeout).
         sl_order_id: Optional[int] = None
         tp_order_id: Optional[int] = None
+        fill: Optional[dict] = None
         try:
-            await self.broker.market_order(symbol, side_str, qty)
+            mo_resp = await self.broker.market_order(symbol, side_str, qty)
+            mo_order_id = (
+                mo_resp.get("orderId") or mo_resp.get("order_id")
+                if isinstance(mo_resp, dict) else None
+            )
+            if mo_order_id is not None and hasattr(self.broker, "wait_for_fill"):
+                try:
+                    fill = await self.broker.wait_for_fill(
+                        symbol, int(mo_order_id), timeout=5.0,
+                    )
+                except Exception as e:  # pragma: no cover — defensive
+                    log.warning("%s wait_for_fill error: %s", symbol, e)
+                    fill = None
 
             if self.exit_cfg.use_exchange_orders:
                 if sl_price is not None:
@@ -328,12 +416,87 @@ class PositionManager:
             log.error("Order placement failed %s: %s", symbol, e)
             return False
 
-        # 6) Track position
+        # ── Phase B2+C1: slippage measurement + abort ──────────────────
+        # Compute realised slippage (signed by side; positive=adverse).
+        # Abort if it exceeds the configured budget — we eat the small
+        # round-trip fee instead of carrying a position with a price
+        # we did not agree to.
+        actual_fill_price = (
+            float(fill["avg_price"]) if fill and fill.get("avg_price") else mark_price
+        )
+        executed_qty = (
+            float(fill["executed_qty"]) if fill and fill.get("executed_qty") else qty
+        )
+        if executed_qty <= 0:
+            log.error("%s [%s] fill returned executed_qty=0 — aborting entry",
+                      symbol, strategy_name)
+            try:
+                await self.broker.close_position(symbol)
+            except Exception:
+                pass
+            return False
+        if actual_fill_price > 0:
+            sign = 1.0 if side_str == SIDE_BUY else -1.0
+            slippage_bps_val = (
+                (actual_fill_price - intended_price) / intended_price * 1e4 * sign
+            )
+        else:
+            slippage_bps_val = 0.0
+
+        max_slip = float(getattr(self.execution_cfg, "max_slippage_bps", 0.0) or 0.0)
+        if max_slip > 0 and abs(slippage_bps_val) > max_slip:
+            log.error(
+                "%s [%s] SLIPPAGE_ABORT — %.2fbps > %.2fbps; closing immediately",
+                symbol, strategy_name, slippage_bps_val, max_slip,
+            )
+            try:
+                await self.broker.close_position(symbol)
+                if sl_order_id and hasattr(self.broker, "cancel_order"):
+                    try:
+                        await self.broker.cancel_order(symbol, sl_order_id)
+                    except Exception:
+                        pass
+                if tp_order_id and hasattr(self.broker, "cancel_order"):
+                    try:
+                        await self.broker.cancel_order(symbol, tp_order_id)
+                    except Exception:
+                        pass
+            except Exception as e:
+                log.error("%s slippage abort close failed: %s", symbol, e)
+            return False
+
+        # ── Phase A2: missing-stop guard ──────────────────────────────
+        # Entry succeeded but the server-side STOP_MARKET did NOT.  We
+        # are now naked-long/short with no on-exchange protection and
+        # local tick-exits depend on a healthy WS feed.  That is not
+        # acceptable for real money — close immediately and leave the
+        # ledger flat instead of accepting a position we can't protect.
+        if (getattr(self.exit_cfg, "use_exchange_orders", False)
+                and sl_price is not None and sl_order_id is None):
+            log.error(
+                "%s [%s] MISSING-STOP at entry — closing position; "
+                "sl_price=%.8f failed to register on exchange",
+                symbol, strategy_name, sl_price,
+            )
+            try:
+                await self.broker.close_position(symbol)
+                # Cancel any TP that did register, to avoid orphan
+                if tp_order_id and hasattr(self.broker, "cancel_order"):
+                    try:
+                        await self.broker.cancel_order(symbol, tp_order_id)
+                    except Exception:
+                        pass
+            except Exception as e:
+                log.error("%s missing-stop force-close failed: %s — manual review",
+                          symbol, e)
+            return False
+
+        # 6) Track position with the *actual* fill price + qty
         pos = Position(
             symbol=symbol,
             side=side_str,
-            qty=qty,
-            entry_price=mark_price,
+            qty=executed_qty,
+            entry_price=actual_fill_price,
             sl_price=sl_price,
             tp_price=tp_price,
             opened_ts=time.time(),
@@ -344,6 +507,13 @@ class PositionManager:
         )
         pos.sl_order_id = sl_order_id
         pos.tp_order_id = tp_order_id
+        # Phase B2 / C1: persisted execution fields
+        pos.intended_price = intended_price
+        pos.fill_price = actual_fill_price
+        pos.slippage_bps = slippage_bps_val
+        # Phase B4: entry-side commission from the fill (USDT-equivalent)
+        if fill:
+            pos.entry_fee_usd = float(fill.get("commission_usd") or 0.0)
         self.assign_liq_price(pos)
         self.open_positions[key] = pos
 
@@ -471,6 +641,52 @@ class PositionManager:
         pos.liq_price = self.compute_liq_price(
             pos.side, pos.entry, leverage, mmr,
         )
+
+    async def check_missing_stop(
+        self, symbol: str, tick_price: float,
+    ) -> List[str]:
+        """Phase A2 tick-time recheck for stop-less open positions.
+
+        The entry path already aborts when a fresh ``STOP_MARKET`` fails
+        to register, but a stop can also disappear later (manual cancel
+        from the Binance UI, exchange-side glitch, exchange-side fill +
+        we missed the close).  Anything still open with
+        ``sl_order_id is None`` while ``use_exchange_orders=True`` is
+        unprotected — force-close at the current mark.
+
+        Returns the strategy keys that were closed.
+        """
+        # Defensive: backtest's ExitConfig (Backtest/exit_manager.py) does
+        # not carry ``use_exchange_orders`` — assume False there to keep
+        # the guard live-only.
+        if not getattr(self.exit_cfg, "use_exchange_orders", False):
+            return []
+        closed: List[str] = []
+        now = time.time()
+        for key, pos in list(self.open_positions.items()):
+            sym, strat = key
+            if sym != symbol or pos.closed:
+                continue
+            if pos.sl_order_id is not None:
+                continue
+            log.error(
+                "%s [%s] MISSING-STOP detected at tick — force closing @ %.8f",
+                sym, strat, tick_price,
+            )
+            try:
+                await self.broker.close_position(sym)
+                await self._cancel_position_orders(pos)
+            except Exception as e:
+                log.error("%s missing-stop close failed: %s", sym, e)
+                continue
+            pos.closed = True
+            pos.exit_ts = now
+            pos.exit = tick_price
+            pos.exit_type = "MISSING_STOP"
+            self.history.append(pos)
+            del self.open_positions[key]
+            closed.append(strat)
+        return closed
 
     async def check_liquidation_warning(
         self, symbol: str, tick_price: float,
@@ -825,7 +1041,9 @@ class LiveSupervisor:
 
     def __init__(self, broker: IBroker, persist_path: str = "logs/live_positions.json",
                  max_global_positions: int = 2,
-                 liq_guard_cfg: Optional[Any] = None):
+                 liq_guard_cfg: Optional[Any] = None,
+                 execution_cfg: Optional[Any] = None,
+                 book_streamer: Optional[Any] = None):
         self.broker = broker
         self._managers: Dict[str, PositionManager] = {}
         self.history: List[Position] = []
@@ -833,6 +1051,9 @@ class LiveSupervisor:
         self._max_global_positions = max_global_positions
         # Forwarded to every PositionManager registered below.
         self.liq_guard_cfg = liq_guard_cfg
+        # Phase B1 — shared execution policy + bookTicker streamer
+        self.execution_cfg = execution_cfg
+        self.book_streamer = book_streamer
 
     def register_symbol(
         self,
@@ -850,6 +1071,8 @@ class LiveSupervisor:
                 max_concurrent=max_concurrent,
                 symbol=symbol,
                 liq_guard_cfg=self.liq_guard_cfg,
+                execution_cfg=self.execution_cfg,
+                book_streamer=self.book_streamer,
             )
             self._managers[symbol] = pm
 
@@ -961,18 +1184,23 @@ class LiveSupervisor:
         1. **Liquidation guard** runs FIRST — emergency pre-emptive
            close beats every other rule because the alternative is the
            exchange's auto-liquidation engine.
-        2. Local exit rules (trailing / USD targets / time-based).
+        2. **Missing-stop guard** — any position without a server-side
+           SL is forcibly closed before we check anything else.  If
+           the stop disappeared (manual cancel, glitch) we are naked
+           and must flatten.
+        3. Local exit rules (trailing / USD targets / time-based).
 
-        Both run in sequence so a single tick can liq-close *and*
-        prune any other positions on the same symbol.  Persistence
-        fires once if anything closed.
+        All three run in sequence so a single tick can pre-empt liq,
+        prune missing-stop positions, *and* fire normal exits.
+        Persistence fires once if anything closed.
         """
         pm = self._managers.get(symbol)
         if pm is None:
             return
         liq_closed = await pm.check_liquidation_warning(symbol, tick_price)
+        miss_closed = await pm.check_missing_stop(symbol, tick_price)
         tick_closed = await pm.check_tick_exits(symbol, tick_price)
-        if liq_closed or tick_closed:
+        if liq_closed or miss_closed or tick_closed:
             self._persist()
 
     def _persist(self):

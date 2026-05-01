@@ -203,20 +203,27 @@ class TestSupervisorOrdering(unittest.IsolatedAsyncioTestCase):
 
             calls = []
             real_liq = pm.check_liquidation_warning
+            real_miss = pm.check_missing_stop
             real_tick = pm.check_tick_exits
 
             async def spy_liq(*a, **kw):
                 calls.append("liq")
                 return await real_liq(*a, **kw)
 
+            async def spy_miss(*a, **kw):
+                calls.append("miss")
+                return await real_miss(*a, **kw)
+
             async def spy_tick(*a, **kw):
                 calls.append("tick")
                 return await real_tick(*a, **kw)
 
             pm.check_liquidation_warning = spy_liq
+            pm.check_missing_stop = spy_miss
             pm.check_tick_exits = spy_tick
             await sup.on_tick("BTCUSDT", 92.0)
-            self.assertEqual(calls, ["liq", "tick"])
+            # Phase A2: missing-stop guard runs between liq and tick exits
+            self.assertEqual(calls, ["liq", "miss", "tick"])
 
 
 # ---------------------------------------------------------------------------

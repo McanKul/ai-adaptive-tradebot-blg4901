@@ -66,6 +66,23 @@ class LiveEngine:
         self.cfg = cfg
         self.broker = broker
         self.global_risk = global_risk
+
+        # Phase C3 — rejection circuit-breaker.  Wires every
+        # BinanceAPIException raised by the broker into a sliding
+        # 5-minute window; a 5-strike storm trips the kill switch.
+        # DryBroker exceptions don't reach here (no API), so this is
+        # effectively live-only safety.
+        try:
+            from live.rejection_counter import RejectionCounter
+            self._rejection_counter = RejectionCounter(
+                max_count=5, window_seconds=300.0,
+                on_trip=self.global_risk.trip_kill_switch,
+            )
+            if hasattr(broker, "attach_rejection_counter"):
+                broker.attach_rejection_counter(self._rejection_counter)
+        except Exception as e:  # pragma: no cover — defensive
+            log.warning("rejection counter disabled: %s", e)
+            self._rejection_counter = None
         self.bar_store = BarStore()
         # Use dedicated market client if provided (e.g. dry-run needs real WS)
         self._market_client = market_client or broker.client
@@ -91,12 +108,16 @@ class LiveEngine:
             max_global_positions=cfg.risk.max_concurrent_positions,
             persist_path=cfg.positions_state_path(),
             liq_guard_cfg=getattr(cfg, "liquidation_guard", None),
+            execution_cfg=cfg.execution,
         )
+        # ``book_streamer`` is wired in run() once the streamer is built —
+        # supervisor.book_streamer is initially None.
 
         # ── Streamer ───────────────────────────────────────────────────
         self.timeframes = [cfg.timeframe]
         self.streamer: Optional[Streamer] = None
-        self.tick_streamer = None  # MarkPriceTickStreamer, set in run()
+        self.tick_streamer = None  # markPrice MarkPriceTickStreamer
+        self.book_streamer = None  # bookTicker MarkPriceTickStreamer
         self.symbols: list[str] = []
 
         # ── Equity Cache (avoid API call every bar) ────────────────────
@@ -265,6 +286,35 @@ class LiveEngine:
         )
         log.info("Resolved %d symbols: %s", len(self.symbols), self.symbols)
 
+        # 1b) Phase D — drop symbols below the 24h-volume gate so we
+        # never trade thin alts on real money.  Threshold of 0 disables
+        # the gate (test-net / new listings).
+        min_vol = float(getattr(self.cfg, "min_24h_volume_usd", 0.0) or 0.0)
+        if min_vol > 0:
+            kept: list[str] = []
+            for sym in self.symbols:
+                try:
+                    vol = await self.broker.get_24h_volume(sym)
+                except Exception as e:
+                    log.warning("[volume_gate] %s probe failed (%s) — keeping",
+                                sym, e)
+                    kept.append(sym)
+                    continue
+                if vol >= min_vol:
+                    kept.append(sym)
+                else:
+                    log.warning(
+                        "[low_volume] %s dropped (24h=$%.0f < min=$%.0f)",
+                        sym, vol, min_vol,
+                    )
+                    try:
+                        await self.notifier.kill_switch(
+                            f"low volume: {sym} 24h=${vol:,.0f}"
+                        )
+                    except Exception:
+                        pass
+            self.symbols = kept
+
         # 2) Register per-symbol managers in supervisor (config-driven)
         for sym in self.symbols:
             self.supervisor.register_symbol(
@@ -337,6 +387,28 @@ class LiveEngine:
         except Exception as e:
             log.warning("tick streamer disabled: %s", e)
             self.tick_streamer = None
+
+        # 10a-2) Book-ticker streamer powers the entry spread filter
+        # (Phase B1).  Lightweight — no callback work, just populates
+        # the bid/ask cache the supervisor reads from.
+        try:
+            from live.tick_stream import MarkPriceTickStreamer as _MPTS
+
+            async def _noop(symbol, price, ts_ms):  # noqa: ARG001
+                return None
+
+            self.book_streamer = _MPTS(
+                client=self._market_client,
+                symbols=self.symbols,
+                on_tick=_noop,
+                source="book",
+            )
+            await self.book_streamer.start()
+            self.supervisor.book_streamer = self.book_streamer
+        except Exception as e:
+            log.warning("book streamer disabled: %s — spread filter will allow all", e)
+            self.book_streamer = None
+            self.supervisor.book_streamer = None
 
         # 10b) Periodic position reconciliation (drift detection).
         # Real-money safety net.  Compares local intended-qty vs the
@@ -492,6 +564,28 @@ class LiveEngine:
                 final_sig = await self._get_combined_signal(sym, strategy_sig)
 
                 if final_sig and not risk_block_entries:
+                    # Phase E1 — stale-feed gate.  When the WS hasn't
+                    # spoken in a while we don't trust our view of the
+                    # market enough to open a fresh position.  Existing
+                    # positions stay protected by their server-side
+                    # SL/TP; only entries are blocked.
+                    max_age = float(getattr(self.cfg.execution,
+                                             "max_tick_age_seconds", 0.0) or 0.0)
+                    if max_age > 0 and self.streamer is not None:
+                        stale = self.streamer.seconds_since_last_message
+                        if stale > max_age:
+                            log.warning(
+                                "[%s] entry blocked — feed stale %.1fs > %.1fs",
+                                sym, stale, max_age,
+                            )
+                            try:
+                                await self.notifier.kill_switch(
+                                    f"feed stale {stale:.0f}s — blocking entries"
+                                )
+                            except Exception:
+                                pass
+                            continue
+
                     leverage = self.cfg.leverage_for(sym)
 
                     log.info(
@@ -519,12 +613,21 @@ class LiveEngine:
                 # symbol's bar event (25 coins = 25x faster expiry).
                 await self.supervisor.update_symbol(sym)
 
-                # Record newly closed positions to metrics + notify
+                # Record newly closed positions to metrics + notify +
+                # feed P&L into global_risk so the daily-loss circuit
+                # breaker (Phase A1) and the consecutive-loss cooldown
+                # (Phase A3) actually see closed-trade outcomes.  Until
+                # this commit ``LiveGlobalRisk.record_pnl`` was never
+                # called and the daily counter stayed at 0 forever.
                 for pos in self.supervisor.history[prev_history_len:]:
                     self.metrics.record(pos)
                     if pos.exit is not None:
                         pnl = pos.unrealized_pnl(pos.exit)
                         pnl_pct = pos.unrealized_pnl_pct(pos.exit) * 100
+                        try:
+                            self.global_risk.record_pnl(pnl)
+                        except Exception as e:
+                            log.warning("global_risk.record_pnl failed: %s", e)
                         await self.notifier.position_closed(
                             pos.symbol, pos.side, pnl, pnl_pct,
                             pos.exit_type or "UNKNOWN",
@@ -541,6 +644,11 @@ class LiveEngine:
             if self.tick_streamer:
                 try:
                     await self.tick_streamer.stop()
+                except Exception:
+                    pass
+            if self.book_streamer:
+                try:
+                    await self.book_streamer.stop()
                 except Exception:
                     pass
             await self.streamer.stop()
@@ -568,6 +676,12 @@ class LiveEngine:
         if self.tick_streamer:
             try:
                 await self.tick_streamer.stop()
+            except Exception:
+                pass
+
+        if self.book_streamer:
+            try:
+                await self.book_streamer.stop()
             except Exception:
                 pass
 

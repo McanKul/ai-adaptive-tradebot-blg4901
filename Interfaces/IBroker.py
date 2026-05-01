@@ -46,3 +46,29 @@ class IBroker(ABC):
 
     @abstractmethod
     async def exchange_info(self) -> dict: ...
+
+    # ---- liquidity gate (Phase D) ----
+    async def get_24h_volume(self, symbol: str) -> float:
+        """Return 24-hour quote-asset volume in USDT.
+
+        Used by ``LiveEngine`` startup to drop symbols below the
+        whitelist's ``min_24h_volume_usd`` threshold.  Defaults to
+        ``+inf`` so brokers that don't override this method (e.g.
+        ``DryBroker``) admit every symbol.
+        """
+        return float("inf")
+
+    # ---- fill confirmation (Phase C1) ----
+    # Default implementation lives on the dataclass via duck-typing —
+    # both BinanceBroker and DryBroker override.  Returns a dict with
+    # at minimum:
+    #   ``status``         : "FILLED" | "PARTIALLY_FILLED" | "CANCELED" |
+    #                        "EXPIRED" | "TIMEOUT"
+    #   ``executed_qty``   : float (in base asset)
+    #   ``avg_price``      : float
+    #   ``commission_usd`` : float (USDT-equivalent total commission)
+    async def wait_for_fill(
+        self, symbol: str, order_id: int, timeout: float = 5.0,
+    ) -> dict:
+        """Poll the exchange until the order finalises or *timeout* hits."""
+        raise NotImplementedError

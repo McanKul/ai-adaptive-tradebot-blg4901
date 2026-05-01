@@ -119,6 +119,30 @@ class ExecutionConfig:
     preload_bars: int = 100
     preload_batch: int = 10
 
+    # ---- Phase B1 — spread filter on entry ----
+    # Reject new entries when the live bookTicker spread (bps) is
+    # wider than this threshold.  Default-deny semantics: if no
+    # bookTicker tick has arrived yet, the entry is also rejected
+    # (treat unknown spread as risky).  Set ``max_entry_spread_bps=0``
+    # to disable the filter entirely.
+    max_entry_spread_bps: float = 5.0
+
+    # ---- Phase B2 — slippage budget ----
+    # After fill confirmation (Phase C1) we compute realised slippage
+    # as (fill_price - intended_price) / intended_price * 1e4, signed
+    # by side (positive = adverse for the position).  When the abs
+    # value exceeds this threshold we close the position immediately
+    # with ``exit_type="SLIPPAGE_ABORT"`` and keep the small loss
+    # rather than ride a broken-execution trade.  Set 0 to disable.
+    max_slippage_bps: float = 15.0
+
+    # ---- Phase E1 — stale-feed guard ----
+    # Maximum seconds since the last WS message before the entry
+    # path refuses to open new positions.  Existing positions stay
+    # open and are still protected by their server-side SL/TP and
+    # the periodic reconciliation loop.  Set 0 to disable the gate.
+    max_tick_age_seconds: float = 30.0
+
 
 # ---------------------------------------------------------------------------
 # Per-symbol route (multi-coin overrides)
@@ -142,11 +166,55 @@ class SymbolRoute:
 # ---------------------------------------------------------------------------
 @dataclass
 class GlobalRiskConfig:
-    """Account-wide risk limits beyond per-trade checks."""
+    """Account-wide risk limits beyond per-trade checks.
+
+    Persisted to ``persist_path`` so daily counters survive restarts.
+    """
     max_account_drawdown_pct: float = 0.20
     max_total_exposure_usd: float = 50_000.0
-    max_correlated_positions: int = 5
+    # Concurrency cap.  Despite the legacy name, this is *not* a true
+    # correlation matrix — it is the maximum number of positions open
+    # at the same time across all symbols.  ``from_dict`` and the
+    # constructor accept the legacy key ``max_correlated_positions``
+    # as an alias for backwards compatibility.
+    max_concurrent_positions: int = 5
     persist_path: str = "logs/live_risk_state.json"
+
+    # ---- daily-loss circuit breaker (Phase A1) ----
+    # Both checks fire independently; the first to breach trips the
+    # kill switch.  USD threshold is robust when equity changes; pct
+    # is robust when sizes scale.  Set EITHER to 0 to disable that
+    # individual check (pct=0.0 disables, USD=0.0 also disables).
+    max_daily_loss: float = 50.0          # USD
+    max_daily_loss_pct: float = 0.10      # fraction of start_equity
+
+    # ---- consecutive-loss cooldown (Phase A3) ----
+    # After ``cooldown_after_losses`` losing trades in a row the engine
+    # blocks new entries for ``cooldown_seconds``.  When the timer
+    # expires the engine resumes automatically — no manual restart.
+    # Set ``cooldown_after_losses=0`` to disable.
+    cooldown_after_losses: int = 3
+    cooldown_seconds: int = 1800          # 30 min
+
+    # ---- legacy alias (Phase A4) ----
+    # Setting this in code (or via the dataclass kw) populates
+    # ``max_concurrent_positions``.  Kept None by default so it does
+    # not silently shadow the new field when users only set the new
+    # one.  The ``__post_init__`` warns + maps when used.
+    max_correlated_positions: Optional[int] = None
+
+    def __post_init__(self):
+        if self.max_correlated_positions is not None:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "GlobalRiskConfig: 'max_correlated_positions' is deprecated, "
+                "renamed to 'max_concurrent_positions' (no behaviour change)"
+            )
+            # Only adopt the legacy value if the new field is still at
+            # its default — explicit new value wins over legacy alias.
+            if self.max_concurrent_positions == 5:  # dataclass default
+                self.max_concurrent_positions = int(self.max_correlated_positions)
+            self.max_correlated_positions = None
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +334,13 @@ class LiveConfig:
     symbols: List[str] = field(default_factory=lambda: ["DOGEUSDT"])
     timeframe: str = "1m"
     name: str = "LiveStrategy"
+    # Phase D — symbol liquidity gate.  At engine startup every symbol
+    # whose 24h quote volume is below this threshold is dropped from
+    # ``symbols`` with a warning log (and a ``notify_blocked`` event
+    # when the notifier is configured).  Default 0 keeps existing
+    # configs and integration tests intact; the canary profile sets
+    # 100_000_000 (100M USDT) to keep illiquid alts off the books.
+    min_24h_volume_usd: float = 0.0
 
     # Run tag — used to namespace log/state files so two parallel
     # dry-runs (e.g. sentiment ON vs OFF) do not stomp on each other.
@@ -372,6 +447,19 @@ class LiveConfig:
         recon_d = d.get("reconciliation", {})
         liq_d = d.get("liquidation_guard", {})
 
+        # Phase A4: legacy alias for the renamed field.  Keep parsing
+        # old configs that still say ``max_correlated_positions``.
+        if isinstance(gr_d, dict) and "max_correlated_positions" in gr_d \
+                and "max_concurrent_positions" not in gr_d:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "GlobalRiskConfig: 'max_correlated_positions' is deprecated, "
+                "renamed to 'max_concurrent_positions' (no behaviour change)"
+            )
+            gr_d = {**gr_d,
+                    "max_concurrent_positions": gr_d["max_correlated_positions"]}
+            gr_d.pop("max_correlated_positions", None)
+
         def _pick(cls, src):
             return cls(**{k: v for k, v in src.items()
                           if k in cls.__dataclass_fields__})
@@ -392,6 +480,7 @@ class LiveConfig:
             timeframe=d.get("timeframe", "1m"),
             name=d.get("name", "LiveStrategy"),
             run_id=d.get("run_id"),
+            min_24h_volume_usd=float(d.get("min_24h_volume_usd", 0.0)),
             sizing=_pick(SizingConfig, sizing_d),
             exit=_pick(ExitConfig, exit_d),
             risk=_pick(RiskConfig, risk_d),

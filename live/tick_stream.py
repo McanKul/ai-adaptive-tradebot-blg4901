@@ -85,6 +85,10 @@ class MarkPriceTickStreamer:
         self._task: Optional[asyncio.Task] = None
         self._stopped = False
         self.stats = _TickStats()
+        # Phase B1 — bookTicker cache (best bid/ask + ts_ms) populated
+        # only when ``source="book"``.  Used by ``open_position`` to
+        # reject entries when the spread is wider than allowed.
+        self._book_cache: dict[str, tuple[float, float, int]] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -183,15 +187,50 @@ class MarkPriceTickStreamer:
 
         Book-ticker payload::
             {"u":..., "s":"BTCUSDT", "b":"<bid>", "a":"<ask>", ...}
+
+        Side-effect: when ``source == "book"`` the bid/ask is cached
+        for the spread filter (Phase B1).
         """
         try:
             symbol = data.get("s", "").upper()
             ts_ms = int(data.get("E") or data.get("T") or time.time() * 1000)
             if self.source == "mark":
                 return symbol, float(data["p"]), ts_ms
-            # bookTicker — use mid
+            # bookTicker — cache bid/ask and forward the mid
             bid = float(data["b"])
             ask = float(data["a"])
+            self._book_cache[symbol] = (bid, ask, ts_ms)
             return symbol, (bid + ask) / 2.0, ts_ms
         except (KeyError, ValueError, TypeError):
             return None, None, 0
+
+    # ------------------------------------------------------------------
+    # Public spread accessors (Phase B1)
+    # ------------------------------------------------------------------
+
+    def get_book(self, symbol: str) -> Optional[tuple[float, float, int]]:
+        """Return ``(best_bid, best_ask, ts_ms)`` or ``None`` if no
+        bookTicker tick has arrived yet for *symbol*.
+
+        Only meaningful when the streamer was constructed with
+        ``source="book"``.  Returns ``None`` for mark-price streamers.
+        """
+        if self.source != "book":
+            return None
+        return self._book_cache.get(symbol.upper())
+
+    def get_spread_bps(self, symbol: str) -> Optional[float]:
+        """Return the current spread in basis points or ``None``.
+
+        ``None`` when (a) the streamer is not in book mode or (b) no
+        tick has arrived for the symbol yet.  Callers should treat
+        ``None`` as a default-deny signal.
+        """
+        book = self.get_book(symbol)
+        if book is None:
+            return None
+        bid, ask, _ = book
+        if bid <= 0 or ask <= 0 or ask <= bid:
+            return None
+        mid = (bid + ask) / 2.0
+        return (ask - bid) / mid * 10_000.0

@@ -574,6 +574,7 @@ class TestGlobalRiskOffByOne(unittest.IsolatedAsyncioTestCase):
 
     def test_correlated_positions_gte(self):
         """With max=2, count=2 should be blocked (>=), not allowed (>)."""
+        # Phase A4: legacy field name still accepted via alias
         risk = LiveGlobalRisk(GlobalRiskConfig(max_correlated_positions=2))
         risk.set_start_equity(1000.0)
 
@@ -588,7 +589,8 @@ class TestGlobalRiskOffByOne(unittest.IsolatedAsyncioTestCase):
         # 2 positions → BLOCKED (the fix: >= instead of >)
         ok, reason = risk.check_account_risk(1000.0, 100.0, 2)
         self.assertFalse(ok, "2 >= 2 should be blocked")
-        self.assertIn("correlated", reason)
+        # Phase A4 renamed the public reason string to "concurrent positions"
+        self.assertIn("concurrent positions", reason)
 
         # 3 positions → also BLOCKED
         ok, _ = risk.check_account_risk(1000.0, 150.0, 3)

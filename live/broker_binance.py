@@ -19,7 +19,7 @@ class BinanceBroker(IBroker):
     _MARK_PRICE_TTL = 2.0  # seconds — cache mark price briefly to reduce API calls
 
     def __init__(self, client: IClient, rate_limiter: AsyncRateLimiter | None = None,
-                 exchange_info_ttl: int = 300):
+                 exchange_info_ttl: int = 300, rejection_counter=None):
         self._client = client
         self.log = setup_logger("BinanceBroker")
         self._rl = rate_limiter or AsyncRateLimiter()
@@ -29,6 +29,12 @@ class BinanceBroker(IBroker):
         self._leverage_set: dict[str, int] = {}  # symbol -> last leverage sent
         # mark price short-lived cache: symbol -> (price, timestamp)
         self._mark_cache: dict[str, tuple[float, float]] = {}
+        # Phase C3 — rejection counter (optional).  When set, every
+        # BinanceAPIException raised by ``market_order``,
+        # ``place_stop_market`` or ``place_take_profit`` is recorded;
+        # the configured callback (e.g. global_risk.trip_kill_switch)
+        # is fired once the threshold is crossed.
+        self._rejection_counter = rejection_counter
 
     @property
     def client(self) -> IClient:
@@ -49,12 +55,16 @@ class BinanceBroker(IBroker):
     # ——————————————————— IBroker API ————————————————————
     async def market_order(self, symbol: str, side: str, qty: float):
         await self._rl.acquire(weight=1)
-        return await self._client.futures_create_order(
-            symbol=symbol,
-            side=side,
-            type=FUTURE_ORDER_TYPE_MARKET,
-            quantity=qty,
-        )
+        try:
+            return await self._client.futures_create_order(
+                symbol=symbol,
+                side=side,
+                type=FUTURE_ORDER_TYPE_MARKET,
+                quantity=qty,
+            )
+        except BinanceAPIException as e:
+            self._record_rejection(f"market_order {symbol} {side}: {e}")
+            raise
 
     async def close_position(self, symbol: str):
         amt = await self.position_amt(symbol)
@@ -89,26 +99,40 @@ class BinanceBroker(IBroker):
         self._leverage_set[symbol] = leverage
 
     # ───── SL / TP Orders (return order ID) ─────
+    # Phase C2: ``workingType="MARK_PRICE"`` matches the trigger price
+    # the exchange uses for liquidation, so our SL/TP cannot be sniped
+    # by a wick on the contract feed.  ``closePosition=True`` already
+    # implies reduce-only on Binance USDT-M; we still log the intent.
     async def place_stop_market(self, symbol: str, side: str, stop_price: float) -> int:
         tick = await self._tick_size(symbol)
         fmt = f"{stop_price:.{abs(int(math.log10(tick)))}f}"
         await self._rl.acquire()
-        resp = await self._client.futures_create_order(
-            symbol=symbol, side=side,
-            type=FUTURE_ORDER_TYPE_STOP_MARKET,
-            stopPrice=fmt, closePosition=True,
-        )
+        try:
+            resp = await self._client.futures_create_order(
+                symbol=symbol, side=side,
+                type=FUTURE_ORDER_TYPE_STOP_MARKET,
+                stopPrice=fmt, closePosition=True,
+                workingType="MARK_PRICE",
+            )
+        except BinanceAPIException as e:
+            self._record_rejection(f"place_stop_market {symbol} {side}: {e}")
+            raise
         return int(resp.get("orderId", 0))
 
     async def place_take_profit(self, symbol: str, side: str, stop_price: float) -> int:
         tick = await self._tick_size(symbol)
         fmt = f"{stop_price:.{abs(int(math.log10(tick)))}f}"
         await self._rl.acquire()
-        resp = await self._client.futures_create_order(
-            symbol=symbol, side=side,
-            type=FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET,
-            stopPrice=fmt, closePosition=True,
-        )
+        try:
+            resp = await self._client.futures_create_order(
+                symbol=symbol, side=side,
+                type=FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET,
+                stopPrice=fmt, closePosition=True,
+                workingType="MARK_PRICE",
+            )
+        except BinanceAPIException as e:
+            self._record_rejection(f"place_take_profit {symbol} {side}: {e}")
+            raise
         return int(resp.get("orderId", 0))
 
     async def cancel_order(self, symbol: str, order_id: int):
@@ -124,6 +148,63 @@ class BinanceBroker(IBroker):
         """Return open orders for *symbol*."""
         await self._rl.acquire()
         return await self._client.futures_get_open_orders(symbol=symbol)
+
+    # ───── Phase C1 — fill confirmation polling ─────
+    async def wait_for_fill(
+        self, symbol: str, order_id: int, timeout: float = 5.0,
+    ) -> dict:
+        """Poll ``futures_get_order`` until the order finalises.
+
+        Returns a dict with the canonicalised fields documented on
+        ``IBroker.wait_for_fill``.  On timeout returns ``status="TIMEOUT"``
+        with whatever partial data has accumulated; the caller decides
+        whether to cancel the remaining qty.
+        """
+        import asyncio
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        last: dict = {}
+        while True:
+            await self._rl.acquire()
+            try:
+                last = await self._client.futures_get_order(
+                    symbol=symbol, orderId=order_id,
+                )
+            except BinanceAPIException as e:
+                self.log.warning("wait_for_fill api error %s: %s", order_id, e)
+                last = {"status": "ERROR", "code": e.code, "msg": str(e)}
+                break
+            status = last.get("status", "")
+            if status in ("FILLED", "CANCELED", "EXPIRED", "REJECTED"):
+                break
+            if status == "PARTIALLY_FILLED" and time.monotonic() >= deadline:
+                # Don't keep polling forever on partials; let the caller
+                # decide whether to cancel the remainder.
+                break
+            if time.monotonic() >= deadline:
+                last = {**last, "status": last.get("status") or "TIMEOUT"}
+                if last["status"] not in ("FILLED", "PARTIALLY_FILLED",
+                                          "CANCELED", "EXPIRED", "REJECTED"):
+                    last["status"] = "TIMEOUT"
+                break
+            await asyncio.sleep(0.2)
+
+        executed = float(last.get("executedQty") or 0.0)
+        avg_price = float(last.get("avgPrice") or 0.0) or float(last.get("price") or 0.0)
+        # Sum commission across fills if present (USDT-M reports it on
+        # the order itself when small; on get_order's "fills" otherwise).
+        commission_usd = 0.0
+        for f in (last.get("fills") or []):
+            try:
+                commission_usd += float(f.get("commission") or 0.0)
+            except (TypeError, ValueError):
+                pass
+        return {
+            "status": last.get("status", "TIMEOUT"),
+            "executed_qty": executed,
+            "avg_price": avg_price,
+            "commission_usd": commission_usd,
+            "raw": last,
+        }
 
     # ───── Helpers ─────
     async def _tick_size(self, symbol: str) -> float:
@@ -145,3 +226,31 @@ class BinanceBroker(IBroker):
             if bal["asset"] == asset:
                 return float(bal["balance"])
         return 0.0
+
+    # ───── Phase D — 24h volume liquidity gate ─────
+    async def get_24h_volume(self, symbol: str) -> float:
+        """Quote-asset (USDT) 24h volume from ``futures_ticker_24hr``."""
+        await self._rl.acquire()
+        try:
+            data = await self._client.futures_ticker(symbol=symbol)
+            # API returns ``quoteVolume`` (in USDT) for USDT-M pairs.
+            return float(data.get("quoteVolume") or 0.0)
+        except Exception as e:
+            self.log.warning("get_24h_volume %s failed: %s", symbol, e)
+            return 0.0
+
+    # Phase C3 — internal hook for the rejection circuit-breaker.
+    def _record_rejection(self, reason: str) -> None:
+        if self._rejection_counter is None:
+            return
+        try:
+            self._rejection_counter.record(reason)
+        except Exception as e:  # pragma: no cover — defensive
+            self.log.warning("rejection_counter.record raised: %s", e)
+
+    def attach_rejection_counter(self, counter) -> None:
+        """Wire the engine's RejectionCounter into the broker so every
+        BinanceAPIException is recorded.  Called by LiveEngine after
+        global_risk is built (the counter's on_trip is bound to
+        ``global_risk.trip_kill_switch``)."""
+        self._rejection_counter = counter
