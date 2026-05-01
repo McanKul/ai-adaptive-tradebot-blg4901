@@ -128,6 +128,81 @@ class LiveEngine:
                 "sentiment will be logged but NOT used for trading"
             )
 
+    # ── Reconciliation (drift detection) ──────────────────────────────
+
+    async def _reconciliation_loop(self) -> None:
+        """Periodically compare local positions vs the exchange.
+
+        Runs as a background task while the engine is alive.  On every
+        non-empty drift report calls :meth:`_handle_drift` which either
+        logs, trips the kill-switch, or force-closes (per
+        ``cfg.reconciliation.action``).
+        """
+        rcfg = self.cfg.reconciliation
+        interval = max(5.0, float(rcfg.interval_seconds))
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    drifts = await self.supervisor.detect_drift(
+                        qty_tolerance=rcfg.qty_tolerance,
+                    )
+                except Exception as e:  # pragma: no cover — defensive
+                    log.warning("drift detection raised: %s", e)
+                    continue
+                if drifts:
+                    await self._handle_drift(drifts, rcfg.action)
+        except asyncio.CancelledError:
+            log.info("Reconciliation loop cancelled")
+            raise
+
+    async def _handle_drift(
+        self, drifts: list[dict], action: str,
+    ) -> None:
+        """Apply the configured response to a non-empty drift list."""
+        for d in drifts:
+            log.warning(
+                "DRIFT %s | local=%.6f exchange=%.6f abs_diff=%.6f kind=%s",
+                d["symbol"], d["local_qty"], d["exchange_qty"],
+                d["abs_diff"], d["kind"],
+            )
+
+        # Telegram (best-effort, failures are non-fatal)
+        try:
+            summary = ", ".join(
+                f"{d['symbol']}({d['kind']}: Δ{d['abs_diff']:.4f})" for d in drifts
+            )
+            await self.notifier.kill_switch(f"position drift detected — {summary}")
+        except Exception:  # pragma: no cover
+            pass
+
+        if action == "alarm":
+            return
+
+        if action == "halt":
+            reason = (
+                "position drift: "
+                + ", ".join(f"{d['symbol']}/{d['kind']}" for d in drifts)
+            )
+            self.global_risk.trip_kill_switch(reason)
+            return
+
+        if action == "force_flat":
+            for d in drifts:
+                try:
+                    await self.broker.close_position(d["symbol"])
+                except Exception as e:
+                    log.error("force_flat close failed for %s: %s",
+                              d["symbol"], e)
+            # Trip kill-switch anyway so we don't keep entering blind
+            self.global_risk.trip_kill_switch(
+                "position drift: force_flat applied"
+            )
+            return
+
+        log.warning("Unknown reconciliation action %r — falling back to halt", action)
+        self.global_risk.trip_kill_switch(f"unknown action {action!r}")
+
     # ── Equity Cache ───────────────────────────────────────────────────
 
     async def _refresh_equity(self) -> float:
@@ -260,6 +335,21 @@ class LiveEngine:
         except Exception as e:
             log.warning("tick streamer disabled: %s", e)
             self.tick_streamer = None
+
+        # 10b) Periodic position reconciliation (drift detection).
+        # Real-money safety net.  Compares local intended-qty vs the
+        # exchange's truth every N seconds; on drift the configured
+        # action (alarm / halt / force_flat) is taken.  Off by default
+        # so dry-run stays cheap on rate limits.
+        self._reconciliation_task: Optional[asyncio.Task] = None
+        if getattr(self.cfg, "reconciliation", None) and self.cfg.reconciliation.enabled:
+            self._reconciliation_task = asyncio.create_task(self._reconciliation_loop())
+            log.info(
+                "Reconciliation loop started (interval=%.1fs, action=%s, tol=%g)",
+                self.cfg.reconciliation.interval_seconds,
+                self.cfg.reconciliation.action,
+                self.cfg.reconciliation.qty_tolerance,
+            )
 
         # 10) Flush buffered WS bars → bar_store + queue (dedup handles overlaps)
         self.streamer.flush_buffer()
@@ -434,6 +524,13 @@ class LiveEngine:
                         )
 
         finally:
+            recon_task = getattr(self, "_reconciliation_task", None)
+            if recon_task:
+                recon_task.cancel()
+                try:
+                    await recon_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             if self.tick_streamer:
                 try:
                     await self.tick_streamer.stop()

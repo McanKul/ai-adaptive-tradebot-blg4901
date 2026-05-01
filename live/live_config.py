@@ -150,6 +150,41 @@ class GlobalRiskConfig:
 
 
 # ---------------------------------------------------------------------------
+# Position reconciliation (drift detection)
+# ---------------------------------------------------------------------------
+@dataclass
+class ReconciliationConfig:
+    """Periodic local-vs-exchange position drift detection.
+
+    Real-money safety net.  The exchange is the source of truth: if our
+    local position quantity diverges from what the exchange reports
+    (manual intervention, missed fill, broker bug, partial liquidation),
+    we want to know within seconds — not at the next bar close.
+
+    Attributes:
+        enabled: Master switch.  Off by default to keep dry-run cheap.
+        interval_seconds: How often to poll the exchange.  30s is a
+            healthy balance — Binance position endpoint is rate-limit
+            cheap (weight 5).  Lower than 10s wastes calls.
+        qty_tolerance: Max absolute qty diff treated as "in sync".
+            Set above zero to absorb rounding noise (e.g. 1e-6 for
+            most pairs; bigger for satoshi-precision symbols).
+        action: What to do when drift is detected:
+            * ``"alarm"``      — log + Telegram only.
+            * ``"halt"``       — trip the global kill-switch (default,
+              recommended for real money).  Existing positions keep
+              their server-side TP/SL; new entries are blocked.
+            * ``"force_flat"`` — close every drifted position via
+              market order.  Aggressive; use only with full trust in
+              the kill-switch persistence story.
+    """
+    enabled: bool = False
+    interval_seconds: float = 30.0
+    qty_tolerance: float = 1e-6
+    action: str = "halt"
+
+
+# ---------------------------------------------------------------------------
 # News sentiment settings
 # ---------------------------------------------------------------------------
 @dataclass
@@ -215,6 +250,7 @@ class LiveConfig:
     symbol_routes: Dict[str, SymbolRoute] = field(default_factory=dict)
     global_risk: GlobalRiskConfig = field(default_factory=GlobalRiskConfig)
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
+    reconciliation: ReconciliationConfig = field(default_factory=ReconciliationConfig)
 
     # API
     testnet: bool = False
@@ -296,6 +332,7 @@ class LiveConfig:
         api_d = d.get("api", {})
         gr_d = d.get("global_risk", {})
         rl_d = d.get("rate_limit", {})
+        recon_d = d.get("reconciliation", {})
 
         def _pick(cls, src):
             return cls(**{k: v for k, v in src.items()
@@ -326,6 +363,7 @@ class LiveConfig:
             symbol_routes=routes,
             global_risk=_pick(GlobalRiskConfig, gr_d),
             rate_limit=_pick(RateLimitConfig, rl_d),
+            reconciliation=_pick(ReconciliationConfig, recon_d),
             testnet=api_d.get("testnet", False),
         )
 

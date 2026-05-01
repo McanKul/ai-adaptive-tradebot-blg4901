@@ -746,6 +746,83 @@ class LiveSupervisor:
             return 0.0
         return pm.position_qty(symbol)
 
+    # ------------------------------------------------------------------
+    # Periodic drift detection (real-money safety net)
+    # ------------------------------------------------------------------
+    async def detect_drift(self, qty_tolerance: float = 1e-6) -> List[Dict[str, Any]]:
+        """Compare local intended-position quantity to the exchange.
+
+        Returns a list of drift records, one per drifted symbol::
+
+            {"symbol": "BTCUSDT",
+             "local_qty": 0.5, "exchange_qty": 0.0,
+             "abs_diff": 0.5, "kind": "ghost_local"}
+
+        ``kind`` values:
+            * ``ghost_local``    — local has position, exchange flat
+              (server-side SL/TP fired and we didn't notice; rare with
+              the periodic ``_EXCHANGE_CHECK_INTERVAL`` poll, but the
+              drift loop closes the loophole during quiet bars).
+            * ``orphan_exchange`` — exchange has position, local flat
+              (manual order, restart with stale state, etc.).
+            * ``size_mismatch``  — both sides hold position but qty
+              differs (partial fill, missed leg, ADL).
+            * ``side_mismatch``  — both hold but signs disagree
+              (catastrophic — manual reversal or broker bug).
+        """
+        drifts: List[Dict[str, Any]] = []
+        for symbol, pm in self._managers.items():
+            try:
+                exchange_amt = await self.broker.position_amt(symbol)
+            except Exception as e:
+                log.warning("%s drift check failed: %s", symbol, e)
+                continue
+
+            local_qty = self._signed_local_qty(pm, symbol)
+            diff = exchange_amt - local_qty
+            if abs(diff) <= qty_tolerance:
+                continue
+
+            kind = self._classify_drift(local_qty, exchange_amt, qty_tolerance)
+            drifts.append({
+                "symbol": symbol,
+                "local_qty": local_qty,
+                "exchange_qty": exchange_amt,
+                "abs_diff": abs(diff),
+                "kind": kind,
+            })
+        return drifts
+
+    @staticmethod
+    def _signed_local_qty(pm: "PositionManager", symbol: str) -> float:
+        """Sum the symbol's open positions as a signed quantity.
+
+        Long → positive; short → negative.  Multiple slot-strategies on
+        the same symbol are summed (which matches what the exchange
+        sees — a single net position per symbol)."""
+        total = 0.0
+        for (sym, _strategy), pos in pm.open_positions.items():
+            if sym != symbol or pos.closed:
+                continue
+            sign = 1.0 if pos.is_long else -1.0
+            total += sign * pos.qty
+        return total
+
+    @staticmethod
+    def _classify_drift(
+        local_qty: float, exchange_qty: float, tol: float,
+    ) -> str:
+        local_zero = abs(local_qty) <= tol
+        exch_zero = abs(exchange_qty) <= tol
+        if local_zero and not exch_zero:
+            return "orphan_exchange"
+        if exch_zero and not local_zero:
+            return "ghost_local"
+        # Both nonzero — sign or size mismatch
+        if (local_qty > 0) != (exchange_qty > 0):
+            return "side_mismatch"
+        return "size_mismatch"
+
     async def on_tick(self, symbol: str, tick_price: float, ts_ms: int = 0) -> None:
         """Forward a mark-price tick to the symbol's PositionManager.
 

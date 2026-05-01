@@ -107,6 +107,18 @@ class LiveGlobalRisk:
     def is_kill_switch_active(self) -> bool:
         return self._kill_switch
 
+    def trip_kill_switch(self, reason: str) -> None:
+        """Manually activate the kill switch from any external safety check
+        (drift detection, anomaly monitor, etc.).  Idempotent: a second
+        call with a different reason keeps the original reason intact —
+        the *first* trip is the one we want recorded."""
+        if self._kill_switch:
+            return
+        self._kill_switch = True
+        self._kill_reason = reason
+        self._save()
+        log.warning("KILL SWITCH TRIPPED externally: %s", reason)
+
     @property
     def daily_pnl(self) -> float:
         return self._daily_pnl
