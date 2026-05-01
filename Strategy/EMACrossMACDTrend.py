@@ -43,7 +43,12 @@ volume_filter   : bool     Hacim filtresi aktif mi (default True).
 volume_period   : int      Hacim SMA periyodu (default 20).
 risk_pct        : float    Equity oranı risk (default 0.005 = %0.5).
 position_size   : float    Fallback pozisyon büyüklüğü (default 1.0).
-allow_reversal  : bool     Ters pozisyona geçişe izin ver (default True).
+allow_reversal  : bool     Ters pozisyona geçişe izin ver (default False).
+                           Reversal == close+open is two non-atomic orders;
+                           the close-leg fill is not awaited before the
+                           open-leg goes out, so a rejected close can
+                           leave the bot doubled up.  Keep False until a
+                           proper reversal-fill confirmation lands.
 exit_on_macd_cross : bool  MACD histogram ters dönüşte çık (default True).
 max_holding_bars : int     Opsiyonel zaman stopu.
 """
@@ -82,7 +87,7 @@ class Strategy(IStrategy):
         risk_pct: float = 0.005,
         position_size: float = 1.0,
         # Behaviour
-        allow_reversal: bool = True,
+        allow_reversal: bool = False,
         exit_on_macd_cross: bool = True,
         max_holding_bars: Optional[int] = None,
         # RSI filter

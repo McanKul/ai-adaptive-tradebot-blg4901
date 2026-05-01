@@ -15,6 +15,7 @@ Signal combination logic:
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Optional, Type
 
@@ -381,6 +382,10 @@ class LiveEngine:
                 equity = await self._refresh_equity()
                 self.metrics.update_equity(equity)
                 self.metrics.log_daily_summary()
+                # Default-deny on entries: if the risk check itself blows up
+                # we must NOT silently allow new entries (which is what the
+                # previous code did by leaving this name unbound).
+                risk_block_entries = True
                 try:
                     open_count = len(self.supervisor.open_positions)
                     total_exposure = sum(
@@ -408,7 +413,8 @@ class LiveEngine:
                     if risk_ok:
                         self._risk_block_logged = False
                 except Exception as e:
-                    log.warning("Global risk check error: %s", e)
+                    log.warning("Global risk check error: %s — blocking new entries", e)
+                    # risk_block_entries already True by default (line above try)
 
                 # ── Build Bar + Context for on_bar strategies ─────────
                 bar_dict = bar_data["k"]
