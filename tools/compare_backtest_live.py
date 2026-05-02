@@ -402,6 +402,82 @@ def print_report(report: DivergenceReport) -> None:
     print()
 
 
+# ---------------------------------------------------------------------------
+# Gate evaluation — promotes "informational tool" to "blocking gate"
+# ---------------------------------------------------------------------------
+
+@dataclass
+class GateResult:
+    """Outcome of a strict-mode gate evaluation.
+
+    ``passed`` is the only value the shell pipeline cares about.
+    ``failures`` is a list of human-readable reasons for the log
+    (one per breached threshold) so the user can fix them in order.
+    """
+    passed: bool
+    failures: List[str] = field(default_factory=list)
+
+
+def evaluate_gate(
+    report: DivergenceReport,
+    *,
+    require_match_rate: Optional[float] = None,
+    max_side_mismatch: Optional[int] = None,
+    max_pnl_diff_avg: Optional[float] = None,
+    max_pnl_diff_max_abs: Optional[float] = None,
+    require_min_matched: Optional[int] = None,
+) -> GateResult:
+    """Apply numeric thresholds to the report and return a pass/fail.
+
+    Each ``None`` argument means "don't check this".  The default
+    canary thresholds (used by ``--strict``) are:
+
+        --require-match-rate     0.80
+        --max-side-mismatch      0
+        --max-pnl-diff-avg       1.00 (USD)
+        --max-pnl-diff-max-abs   5.00 (USD)
+        --require-min-matched    10
+    """
+    failures: List[str] = []
+
+    if (require_match_rate is not None
+            and report.match_rate < require_match_rate):
+        failures.append(
+            f"match_rate {report.match_rate:.2%} < required "
+            f"{require_match_rate:.2%}"
+        )
+
+    if (max_side_mismatch is not None
+            and report.side_mismatch_count > max_side_mismatch):
+        failures.append(
+            f"side_mismatch {report.side_mismatch_count} > allowed "
+            f"{max_side_mismatch}"
+        )
+
+    if (max_pnl_diff_avg is not None
+            and abs(report.pnl_diff_avg_matched) > max_pnl_diff_avg):
+        failures.append(
+            f"|pnl_diff_avg_matched| ${abs(report.pnl_diff_avg_matched):.4f} "
+            f"> ${max_pnl_diff_avg:.4f}"
+        )
+
+    if (max_pnl_diff_max_abs is not None
+            and report.pnl_diff_max_abs > max_pnl_diff_max_abs):
+        failures.append(
+            f"pnl_diff_max_abs ${report.pnl_diff_max_abs:.4f} "
+            f"> ${max_pnl_diff_max_abs:.4f}"
+        )
+
+    if (require_min_matched is not None
+            and report.matched_count < require_min_matched):
+        failures.append(
+            f"matched_count {report.matched_count} < required "
+            f"{require_min_matched} — sample too small to gate on"
+        )
+
+    return GateResult(passed=not failures, failures=failures)
+
+
 def report_to_json(report: DivergenceReport) -> dict:
     return {
         "backtest_count": report.backtest_count,
@@ -448,6 +524,29 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--by-symbol", action="store_true")
     p.add_argument("--json-out", default=None,
                    help="Optional path for machine-readable report")
+
+    # Strict / gate mode — turns the script from "informational" into a
+    # promotion gate.  Any unmet threshold returns nonzero so a calling
+    # shell pipeline (or tools/promote_to_live.py) can refuse the live run.
+    gate = p.add_argument_group(
+        "gate (strict mode — exit nonzero on threshold breach)",
+    )
+    gate.add_argument("--strict", action="store_true",
+                      help="Apply the canary defaults: match_rate>=0.80, "
+                           "side_mismatch=0, |pnl_diff_avg|<=1.0, "
+                           "pnl_diff_max_abs<=5.0, matched_count>=10")
+    gate.add_argument("--require-match-rate", type=float, default=None,
+                      help="Minimum match_rate (e.g. 0.80)")
+    gate.add_argument("--max-side-mismatch", type=int, default=None,
+                      help="Max allowed side mismatches inside matched set")
+    gate.add_argument("--max-pnl-diff-avg", type=float, default=None,
+                      help="Max |pnl_diff_avg_matched| in USD")
+    gate.add_argument("--max-pnl-diff-max-abs", type=float, default=None,
+                      help="Max pnl_diff_max_abs in USD (single-trade outlier)")
+    gate.add_argument("--require-min-matched", type=int, default=None,
+                      help="Minimum number of matched trades before gating "
+                           "on the other thresholds (avoids false-pass on "
+                           "near-empty windows)")
     args = p.parse_args(argv)
 
     bt = load_backtest_trades(args.backtest_trades)
@@ -464,7 +563,49 @@ def main(argv: Optional[List[str]] = None) -> int:
         with open(args.json_out, "w", encoding="utf-8") as f:
             json.dump(report_to_json(report), f, indent=2)
         print(f"JSON report: {args.json_out}")
-    return 0
+
+    # Gate evaluation — apply explicit flags first, fall back to
+    # canary defaults when --strict is set without explicit overrides.
+    gate_active = (
+        args.strict
+        or args.require_match_rate is not None
+        or args.max_side_mismatch is not None
+        or args.max_pnl_diff_avg is not None
+        or args.max_pnl_diff_max_abs is not None
+        or args.require_min_matched is not None
+    )
+    if not gate_active:
+        return 0
+
+    def _pick(value, default):
+        return value if value is not None else default
+
+    if args.strict:
+        thresholds = dict(
+            require_match_rate=_pick(args.require_match_rate, 0.80),
+            max_side_mismatch=_pick(args.max_side_mismatch, 0),
+            max_pnl_diff_avg=_pick(args.max_pnl_diff_avg, 1.0),
+            max_pnl_diff_max_abs=_pick(args.max_pnl_diff_max_abs, 5.0),
+            require_min_matched=_pick(args.require_min_matched, 10),
+        )
+    else:
+        thresholds = dict(
+            require_match_rate=args.require_match_rate,
+            max_side_mismatch=args.max_side_mismatch,
+            max_pnl_diff_avg=args.max_pnl_diff_avg,
+            max_pnl_diff_max_abs=args.max_pnl_diff_max_abs,
+            require_min_matched=args.require_min_matched,
+        )
+
+    gate_res = evaluate_gate(report, **thresholds)
+    if gate_res.passed:
+        print("GATE: PASS — every configured threshold met.")
+        return 0
+
+    print("GATE: FAIL — promotion blocked.  Reasons:")
+    for reason in gate_res.failures:
+        print(f"  - {reason}")
+    return 1
 
 
 if __name__ == "__main__":

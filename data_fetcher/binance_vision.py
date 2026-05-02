@@ -45,11 +45,36 @@ import requests
 
 log = logging.getLogger(__name__)
 
-# Binance Vision base URLs
+# Binance Vision base URLs.  Layout: ``<market>/<freq>/<dataset>/<symbol>/``
+# where market is ``spot`` | ``futures/um`` | ``futures/cm``.  Old
+# ``SPOT_*`` constants are kept for back-compat — the fetcher no longer
+# references them but downstream tools may.
 BINANCE_VISION_BASE = "https://data.binance.vision/"
 SPOT_AGGTRADES_DAILY = "data/spot/daily/aggTrades/{symbol}/"
 SPOT_AGGTRADES_MONTHLY = "data/spot/monthly/aggTrades/{symbol}/"
 SPOT_TRADES_DAILY = "data/spot/daily/trades/{symbol}/"
+
+_MARKET_PREFIX = {
+    "spot": "data/spot",
+    "um":   "data/futures/um",     # USD-M perpetuals — what we trade live
+    "cm":   "data/futures/cm",
+}
+
+
+def _build_path(market_type: str, freq: str, data_type: str, symbol: str) -> str:
+    """Compose ``<market>/<freq>/<dataset>/<symbol>/`` for Binance Vision.
+
+    ``freq`` is ``daily`` or ``monthly``; ``data_type`` is ``aggTrades``
+    or ``trades``.  Raises ``ValueError`` for unknown markets so the
+    caller fails loud instead of silently fetching the wrong data.
+    """
+    prefix = _MARKET_PREFIX.get(market_type)
+    if prefix is None:
+        raise ValueError(
+            f"unknown market_type {market_type!r}; expected one of "
+            f"{sorted(_MARKET_PREFIX)}"
+        )
+    return f"{prefix}/{freq}/{data_type}/{symbol}/"
 
 
 @dataclass
@@ -110,23 +135,27 @@ class BinanceVisionFetcher:
         self.close()
     
     def get_daily_url(self, symbol: str, date: datetime) -> str:
-        """Get URL for daily aggTrades/trades file."""
+        """Build the daily zip URL using the configured market_type."""
         date_str = date.strftime("%Y-%m-%d")
-        
-        if self.config.data_type == "aggTrades":
-            path = SPOT_AGGTRADES_DAILY.format(symbol=symbol)
-            filename = f"{symbol}-aggTrades-{date_str}.zip"
-        else:
-            path = SPOT_TRADES_DAILY.format(symbol=symbol)
-            filename = f"{symbol}-trades-{date_str}.zip"
-        
+        path = _build_path(
+            market_type=self.config.market_type,
+            freq="daily",
+            data_type=self.config.data_type,
+            symbol=symbol,
+        )
+        filename = f"{symbol}-{self.config.data_type}-{date_str}.zip"
         return urljoin(BINANCE_VISION_BASE, path + filename)
-    
+
     def get_monthly_url(self, symbol: str, year: int, month: int) -> str:
-        """Get URL for monthly aggTrades file."""
+        """Build the monthly zip URL using the configured market_type."""
         month_str = f"{year}-{month:02d}"
-        path = SPOT_AGGTRADES_MONTHLY.format(symbol=symbol)
-        filename = f"{symbol}-aggTrades-{month_str}.zip"
+        path = _build_path(
+            market_type=self.config.market_type,
+            freq="monthly",
+            data_type=self.config.data_type,
+            symbol=symbol,
+        )
+        filename = f"{symbol}-{self.config.data_type}-{month_str}.zip"
         return urljoin(BINANCE_VISION_BASE, path + filename)
     
     def get_output_path(self, symbol: str, date: datetime) -> Path:

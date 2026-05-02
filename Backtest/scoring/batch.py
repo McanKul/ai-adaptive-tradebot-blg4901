@@ -287,10 +287,30 @@ class BatchBacktest:
         
         total = len(params_list)
         
-        # Create splitter if not provided
+        # Create splitter if not provided.  Earlier versions defaulted
+        # to ``start=0, end=1 year`` whenever ``data.start_ts_ns`` was
+        # not pre-populated — every fold landed outside the actual
+        # tick data range and produced 0 trades, so the aggregate
+        # scores were meaningless.  Inferring from disk is the right
+        # behaviour and we now refuse to fall back to fictitious
+        # bounds when no data is found.
         if splitter is None:
-            start_ns = self.config.data.start_ts_ns or 0
-            end_ns = self.config.data.end_ts_ns or int(365 * 24 * 60 * 60 * 1e9)  # Default 1 year
+            start_ns = self.config.data.start_ts_ns
+            end_ns = self.config.data.end_ts_ns
+            if not start_ns or not end_ns:
+                inferred = self._infer_tick_range()
+                if inferred is None:
+                    raise ValueError(
+                        "BatchBacktest CV needs an explicit time range.  "
+                        "Set DataConfig.start_ts_ns/end_ts_ns or backfill "
+                        "tick data so the bounds can be inferred from "
+                        "filenames in `data.tick_data_dir`."
+                    )
+                start_ns, end_ns = inferred
+                log.info(
+                    "CV time range inferred from tick data: "
+                    "%d -> %d", start_ns, end_ns,
+                )
             total_duration = end_ns - start_ns
             
             if split_mode == "purged_kfold":
@@ -590,10 +610,75 @@ class BatchBacktest:
             liquidity_scale=getattr(self.config, 'liquidity_scale', 1.0),
             min_fill_ratio=getattr(self.config, 'min_fill_ratio', 0.0),
             close_positions_at_end=getattr(self.config, 'close_positions_at_end', True),
+            # Leverage settings — previously dropped, which silently
+            # demoted CV folds to spot mode while the single backtest
+            # ran in margin mode (CV scores then diverged from the
+            # full-period score for the same params).
+            leverage_mode=getattr(self.config, "leverage_mode", "spot"),
+            leverage=getattr(self.config, "leverage", 1),
+            maintenance_margin_ratio=getattr(
+                self.config, "maintenance_margin_ratio", 0.5,
+            ),
+            # Tick-level exit + per-trade exit rules — same reason: the
+            # full backtest had these on; CV folds were running with
+            # the dataclass defaults, which let trailing stops and
+            # max-holding behave differently between the two paths.
+            enable_tick_exit=getattr(self.config, "enable_tick_exit", True),
+            tp_pct=getattr(self.config, "tp_pct", None),
+            sl_pct=getattr(self.config, "sl_pct", None),
+            trailing_stop_pct=getattr(self.config, "trailing_stop_pct", None),
+            max_holding_bars=getattr(self.config, "max_holding_bars", None),
             # Realism config passthrough (Part A/C)
             realism=self.config.realism,
         )
-    
+
+    # ------------------------------------------------------------------
+    # Tick-range inference (Bug 4 — silent default removal)
+    # ------------------------------------------------------------------
+    def _infer_tick_range(self) -> Optional[Tuple[int, int]]:
+        """Scan ``data.tick_data_dir`` for partitioned daily files and
+        return ``(start_ns, end_ns)`` if any are found.
+
+        Tick files are named ``YYYY-MM-DD.csv`` per symbol directory.
+        We use the earliest start-of-day across symbols and the latest
+        end-of-day — that bounds the entire data the backtest engine
+        could possibly load.  Returning None forces the caller to
+        fail loud (see ``run_with_cv``).
+        """
+        import os
+        import datetime as _dt
+        try:
+            tick_dir = self.config.data.tick_data_dir
+            symbols = self.config.data.symbols or []
+        except AttributeError:
+            return None
+        if not tick_dir or not symbols:
+            return None
+        if not os.path.isdir(tick_dir):
+            return None
+
+        all_dates: List[_dt.date] = []
+        for sym in symbols:
+            sym_dir = os.path.join(tick_dir, sym)
+            if not os.path.isdir(sym_dir):
+                continue
+            for fname in os.listdir(sym_dir):
+                stem, _, ext = fname.partition(".")
+                if ext.lower() not in ("csv", "csv.gz", "parquet"):
+                    continue
+                try:
+                    all_dates.append(_dt.date.fromisoformat(stem))
+                except ValueError:
+                    continue
+        if not all_dates:
+            return None
+        all_dates.sort()
+        first = _dt.datetime.combine(all_dates[0], _dt.time.min,
+                                     tzinfo=_dt.timezone.utc)
+        last = _dt.datetime.combine(all_dates[-1], _dt.time.max,
+                                    tzinfo=_dt.timezone.utc)
+        return int(first.timestamp() * 1e9), int(last.timestamp() * 1e9)
+
     @property
     def run_count(self) -> int:
         """Total backtests run."""

@@ -45,31 +45,21 @@ strategy:
     min_histogram_pct: 0.0            # Min histogram esigi (ATR %'si, backtest ile optimize et)
 
 # ---------- symbols & timeframe ----------
+# WARNING: this profile used to open 23 symbols at 10x leverage —
+# any alt-season blow-out wiped most of the equity in one bar.  Now
+# trimmed to 5 highest-liquidity USDT-M perps that move on their own
+# news flow and behave reasonably under backtest realism.  If you
+# really want the long tail, use config/profiles/aggressive.yaml and
+# accept the correlation risk.
 symbols:
-  # BTCUSDT/ETHUSDT removed — $5 margin too low for min lot size
+  - BTCUSDT
+  - ETHUSDT
   - SOLUSDT
-  - XRPUSDT
-  - DOGEUSDT
-  - ADAUSDT
   - AVAXUSDT
-  - DOTUSDT
   - LINKUSDT
-  - POLUSDT
-  - NEARUSDT
-  - APTUSDT
-  - ARBUSDT
-  - OPUSDT
-  - SUIUSDT
-  - SEIUSDT
-  - INJUSDT
-  - TIAUSDT
-  # FTM rebranded to S on Binance (2024) — re-add as SUSDT once stable
-  - ATOMUSDT
-  - FILUSDT
-  - RUNEUSDT
-  - WLDUSDT
-  - 1000PEPEUSDT
-  - WIFUSDT
+
+# Phase D liquidity gate — drops anything thin at startup.
+min_24h_volume_usd: 100_000_000
 
 timeframe: "15m"
 name: "EMACross_MACD_Trend_15m"
@@ -77,8 +67,9 @@ name: "EMACross_MACD_Trend_15m"
 # ---------- position sizing ----------
 sizing:
   mode: "margin_usd"
-  margin_usd: 10.0                     # $10 margin per trade ($21 bakiye icin uygun)
-  leverage: 10                        # 10x → $100 notional per trade
+  margin_usd: 10.0                     # $10 margin per trade
+  leverage: 5                         # 5x cap; previous 10x amplified
+                                       # canary-stage mistakes too much
   leverage_mode: "margin"
 
 # ---------- exit rules ----------

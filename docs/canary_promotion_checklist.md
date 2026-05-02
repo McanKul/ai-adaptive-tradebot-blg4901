@@ -64,15 +64,35 @@ is a footgun.
 ## Launch sequence
 
 ```bash
-# 1) Validate YAML syntactically + structurally
-python app.py validate --config config/profiles/canary.yaml
+# 1) Validate YAML — REAL-MONEY MODE (strict)
+#    Catches: leverage > 10, deprecated tickers (FTM/MATIC), volume gate
+#    off, allow_reversal=true, daily-loss disabled, liquidation guard
+#    off, reconciliation off, > 8 symbols.
+python app.py validate --config config/profiles/canary.yaml --real-money
 
-# 2) Final dry-run smoke (10 min, must be silent)
-python app.py dry-run --config config/profiles/canary.yaml --run-id canary_smoke
+# 2) Final dry-run smoke (24h, must be silent)
+python app.py dry-run --config config/profiles/canary.yaml --run-id canary
 
-# 3) Live launch
+# 3) **Promotion gate** — runs validate + backtest export + divergence
+#    in strict mode + EOD rollup + thresholds.  Refuses to return 0
+#    unless every numeric check passes.  This is the single command
+#    you actually run before flipping to live.
+python tools/promote_to_live.py \
+  --config config/profiles/canary.yaml \
+  --strategy EMACrossMACDTrend --symbol BTCUSDT --timeframe 15m \
+  --realism-config example_realism_config.yaml \
+  --live-trades logs/live_trades_canary.csv \
+  --date $(date -u +%F) \
+  --window "$(date -u -d 'yesterday' +%FT00:00),$(date -u +%FT00:00)" \
+  --run-id canary
+
+# 4) Only if step 3 returned 0:
 python app.py live --config config/profiles/canary.yaml --run-id canary
 ```
+
+The promotion gate exits with codes ``1/2/3/4`` (validate / backtest /
+divergence / EOD); each stage prints the exact failure reasons before
+exiting.  Don't override its decision by hand.
 
 ## First 24 hours — watch list
 

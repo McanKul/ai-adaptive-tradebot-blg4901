@@ -110,6 +110,21 @@ Note: Data is downloaded from https://data.binance.vision/ (free, no API key nee
         action="store_true",
         help="Enable verbose logging"
     )
+    parser.add_argument(
+        "--market-type",
+        default="um",
+        choices=["spot", "um", "cm"],
+        help="Binance Vision dataset: 'spot' (legacy default), 'um' "
+             "(USD-M perpetuals — what the live engine trades, default), "
+             "or 'cm' (COIN-M).  The bot's backtest engine expects USD-M "
+             "tick data when running futures-flavoured live configs.",
+    )
+    parser.add_argument(
+        "--data-type",
+        default="aggTrades",
+        choices=["aggTrades", "trades"],
+        help="aggTrades (smaller, recommended) or trades",
+    )
     
     args = parser.parse_args()
 
@@ -153,7 +168,9 @@ Note: Data is downloaded from https://data.binance.vision/ (free, no API key nee
     
     config = FetchConfig(
         output_dir=args.output,
-        overwrite=args.overwrite
+        overwrite=args.overwrite,
+        market_type=args.market_type,
+        data_type=args.data_type,
     )
     
     overall_files = 0
@@ -230,14 +247,22 @@ Note: Data is downloaded from https://data.binance.vision/ (free, no API key nee
             for err in fetcher.errors[-5:]:
                 print(f"  - {err}")
         
-        # Show output location
-        output_path = Path(args.output) / args.symbol.upper()
-        print(f"\nData saved to: {output_path}/")
-        
-        # Verify what we got
-        result = fetcher.verify_data(args.symbol, args.start, args.end)
-        if result['dates_missing']:
-            print(f"\n⚠ Warning: {len(result['dates_missing'])} dates missing (may be weekends or no data)")
+        # Show output location(s) and per-symbol verification.  Earlier
+        # versions hit ``args.symbol.upper()`` here unconditionally,
+        # which raised ``AttributeError`` when only ``--symbols`` was
+        # supplied (args.symbol stays None).  Iterate the resolved list
+        # instead.
+        for sym in symbols:
+            output_path = Path(args.output) / sym
+            print(f"\nData saved to: {output_path}/")
+            try:
+                result = fetcher.verify_data(sym, args.start, args.end)
+            except Exception as e:
+                print(f"  verify failed for {sym}: {e}")
+                continue
+            if result['dates_missing']:
+                print(f"  ⚠ {sym}: {len(result['dates_missing'])} dates "
+                      f"missing (weekends or unavailable)")
 
 
 if __name__ == "__main__":

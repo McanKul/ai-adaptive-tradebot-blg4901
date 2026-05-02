@@ -2,6 +2,15 @@
 core/config_validator.py
 ========================
 Validates live trading config files before use.
+
+Two modes:
+* ``validate(path)`` — basic structural checks, used by ``app.py validate``.
+* ``validate(path, real_money=True)`` — adds real-money safety checks
+  (leverage cap, liquidity gate, no FTM/MATIC outdated tickers,
+  reversal off, daily-loss enforced).  These rules embody the same
+  defaults as ``config/profiles/canary.yaml``; if you fork the canary
+  profile this validator catches divergences before the bot opens
+  its first real-money position.
 """
 from __future__ import annotations
 
@@ -14,12 +23,36 @@ from core.factories.strategy_factory import StrategyFactory
 log = logging.getLogger(__name__)
 
 
+# Tickers Binance has renamed/delisted on USDT-M perpetuals — leaving
+# them in the YAML lights up symbol-not-found rejections at order time.
+# Keep updated as the exchange announces rebrandings.
+DEPRECATED_TICKERS = {
+    "FTMUSDT": "renamed to S in 2024 — use SUSDT once liquidity stabilises",
+    "MATICUSDT": "renamed to POL in 2024 — use POLUSDT",
+}
+
+# Real-money default thresholds.  These mirror the canary profile and
+# the canary_promotion_checklist.md.  They are intentionally tight.
+REAL_MONEY_DEFAULTS = {
+    "max_leverage": 10,
+    "min_24h_volume_usd": 50_000_000.0,
+    "min_max_daily_loss_pct": 0.05,  # require at least one loss-pct or USD cap
+}
+
+
 class ConfigValidator:
     """Validate a YAML/JSON live config file and report errors."""
 
-    def validate(self, config_path: str) -> List[str]:
+    def validate(self, config_path: str, real_money: bool = False) -> List[str]:
         """
         Validate the given config file.
+
+        Args:
+            config_path: Path to the YAML/JSON live config.
+            real_money: When True, also apply the strict real-money
+                checks (leverage cap, liquidity gate, no deprecated
+                tickers, etc.).  ``app.py validate`` exposes this via
+                ``--real-money`` for the canary promotion gate.
 
         Returns:
             List of error strings. Empty list means the config is valid.
@@ -86,5 +119,98 @@ class ConfigValidator:
                     f"Unknown news sentiment provider: '{provider}'. "
                     f"Available: {list(NewsFactory._providers.keys())}"
                 )
+
+        # ── Real-money strict checks ───────────────────────────────────
+        if real_money:
+            errors.extend(self._real_money_checks(cfg))
+
+        return errors
+
+    @staticmethod
+    def _real_money_checks(cfg) -> List[str]:
+        """Apply the canary-profile contract.
+
+        Each rule maps to a specific real-money failure mode; the
+        message names which one so the user can fix it without
+        guessing.
+        """
+        errors: List[str] = []
+
+        # 1. Leverage cap (5× preferred for canary; 10× hard ceiling).
+        if cfg.sizing.leverage > REAL_MONEY_DEFAULTS["max_leverage"]:
+            errors.append(
+                f"[real-money] leverage {cfg.sizing.leverage}x exceeds "
+                f"hard cap {REAL_MONEY_DEFAULTS['max_leverage']}x — "
+                f"first real-money runs should stay at 3-5x"
+            )
+
+        # 2. Liquidity gate must be active.
+        min_vol = float(getattr(cfg, "min_24h_volume_usd", 0.0) or 0.0)
+        if min_vol < REAL_MONEY_DEFAULTS["min_24h_volume_usd"]:
+            errors.append(
+                f"[real-money] min_24h_volume_usd is "
+                f"${min_vol:,.0f} (< required "
+                f"${REAL_MONEY_DEFAULTS['min_24h_volume_usd']:,.0f}); "
+                f"micro-cap whitelist will admit thin pairs"
+            )
+
+        # 3. Deprecated tickers — Binance rebranded these and the old
+        # symbols may not exist on the margin pair anymore.
+        for sym in cfg.symbols or []:
+            if sym in DEPRECATED_TICKERS:
+                errors.append(
+                    f"[real-money] symbol '{sym}' is deprecated: "
+                    f"{DEPRECATED_TICKERS[sym]}"
+                )
+
+        # 4. Sembol sayısı + concurrent positions hesabı — bir senkron
+        # dump'da kontrol edilebilir bir sınır.
+        n_syms = len(cfg.symbols or [])
+        if n_syms > 8:
+            errors.append(
+                f"[real-money] symbol count {n_syms} > 8 — "
+                f"correlation risk is high during alt-season; trim to "
+                f"a smaller liquid whitelist (BTC/ETH/SOL/AVAX/LINK is the "
+                f"canary baseline)"
+            )
+
+        # 5. allow_reversal must be off until Phase B5 ships.
+        params = (cfg.strategy_params or {})
+        if params.get("allow_reversal", False):
+            errors.append(
+                "[real-money] strategy.params.allow_reversal=true — "
+                "close+open is two non-atomic legs; keep this off until "
+                "Phase B5 (limit_with_timeout + reversal-fill confirmation) "
+                "lands"
+            )
+
+        # 6. Daily-loss circuit-breaker must be configured.
+        gr = getattr(cfg, "global_risk", None)
+        if gr is not None:
+            usd_cap = float(getattr(gr, "max_daily_loss", 0.0) or 0.0)
+            pct_cap = float(getattr(gr, "max_daily_loss_pct", 0.0) or 0.0)
+            if usd_cap <= 0 and pct_cap <= 0:
+                errors.append(
+                    "[real-money] global_risk daily-loss circuit-breaker "
+                    "disabled — set max_daily_loss (USD) or "
+                    "max_daily_loss_pct"
+                )
+
+        # 7. Liquidation guard must be on.
+        liq = getattr(cfg, "liquidation_guard", None)
+        if liq is not None and not getattr(liq, "enabled", False):
+            errors.append(
+                "[real-money] liquidation_guard.enabled=false — pre-emptive "
+                "close is the cheapest insurance you have; turn it on"
+            )
+
+        # 8. Reconciliation must be on.
+        rec = getattr(cfg, "reconciliation", None)
+        if rec is not None and not getattr(rec, "enabled", False):
+            errors.append(
+                "[real-money] reconciliation.enabled=false — drift "
+                "detection catches manual / ADL fills the engine missed; "
+                "turn it on"
+            )
 
         return errors

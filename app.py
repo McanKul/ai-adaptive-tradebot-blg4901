@@ -416,6 +416,11 @@ def _cmd_walk_forward(args):
 def _add_validate_parser(subparsers):
     p = subparsers.add_parser("validate", help="Validate a config file")
     p.add_argument("--config", required=True, help="Path to YAML/JSON config")
+    p.add_argument("--real-money", action="store_true",
+                   help="Apply strict real-money checks (leverage cap, "
+                        "liquidity gate, no deprecated tickers, daily-loss "
+                        "enforced, allow_reversal off, etc.).  Required "
+                        "before promoting a config to live trading.")
     p.set_defaults(func=_cmd_validate)
 
 
@@ -423,15 +428,17 @@ def _cmd_validate(args):
     from core.config_validator import ConfigValidator
 
     validator = ConfigValidator()
-    errors = validator.validate(args.config)
+    errors = validator.validate(args.config, real_money=args.real_money)
 
     if errors:
-        print(f"\nConfig validation FAILED ({len(errors)} error(s)):\n")
+        scope = "REAL-MONEY" if args.real_money else "BASIC"
+        print(f"\n{scope} config validation FAILED ({len(errors)} error(s)):\n")
         for i, e in enumerate(errors, 1):
             print(f"  {i}. {e}")
         sys.exit(1)
 
-    print(f"\nConfig is valid: {args.config}")
+    scope = "real-money checks passed" if args.real_money else "basic checks passed"
+    print(f"\nConfig is valid ({scope}): {args.config}")
 
 
 # ── Main ─────────────────────────────────────────────────────────────
