@@ -587,9 +587,15 @@ class BacktestEngine:
             result.metadata["total_unfilled_qty"] = exec_stats.total_unfilled_qty
             result.metadata["avg_fill_ratio"] = exec_stats.avg_fill_ratio
         
+        # ``total_return_pct`` is stored as a percentage value (e.g.
+        # 0.44 means +0.44%, NOT +44%).  Python's ``:.2%`` would
+        # multiply by 100 a second time and print "44.00%".  Use plain
+        # float formatting + literal '%' so the unit matches the
+        # tabular ``BacktestService.print_result`` output.
         log.info(
             f"Backtest complete: {self._tick_count} ticks, {self._bar_count} bars, "
-            f"return={result.total_return_pct:.2%}, sharpe={result.sharpe_ratio:.2f}"
+            f"return={result.total_return_pct:+.2f}%, "
+            f"sharpe={result.sharpe_ratio:.2f}"
         )
         
         return result

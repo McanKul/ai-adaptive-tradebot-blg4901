@@ -43,6 +43,10 @@ class BacktestService:
         data_dir: str = "./data/ticks",
         realism_config_path: Optional[str] = None,
         composite_spec_path: Optional[str] = None,
+        # Phase 7 — partial-fill simulation (CLI flags map here).
+        enable_partial_fills: Optional[bool] = None,
+        liquidity_scale: Optional[float] = None,
+        min_fill_ratio: Optional[float] = None,
         **engine_overrides: Any,
     ) -> BacktestResult:
         """
@@ -106,6 +110,26 @@ class BacktestService:
 
         if realism_config_path:
             config.realism = RealismConfig.from_yaml(realism_config_path)
+
+        # ── Bug 7: partial-fill mapping ────────────────────────────────
+        # Resolve precedence: CLI flag > realism YAML > engine default.
+        # Earlier the realism YAML's ``partial_fills`` block was
+        # parsed into ``RealismConfig`` but never copied into the
+        # ``EngineConfig`` partial-fill fields, so the engine ran with
+        # ``enable_partial_fills=False`` regardless of YAML.
+        pf = getattr(config.realism, "partial_fills", None)
+        if pf is not None and getattr(pf, "enabled", False):
+            config.enable_partial_fills = True
+            config.liquidity_scale = float(pf.liquidity_scale)
+            config.min_fill_ratio = float(pf.min_fill_ratio)
+        # CLI flags win over realism YAML so a one-off run can flip
+        # the switch without rewriting the YAML.
+        if enable_partial_fills is not None:
+            config.enable_partial_fills = bool(enable_partial_fills)
+        if liquidity_scale is not None:
+            config.liquidity_scale = float(liquidity_scale)
+        if min_fill_ratio is not None:
+            config.min_fill_ratio = float(min_fill_ratio)
 
         # -- Strategy (composite or single) ---------------------------------
         if composite_spec_path:
@@ -352,42 +376,60 @@ class BacktestService:
         path: str,
         strategy_name: str = "",
         symbol: str = "",
+        run_metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Serialise round-trip trades + run metadata to JSON.
 
-        Output shape matches the reader in
-        ``tools/compare_backtest_live.py:load_backtest_trades`` — a
-        top-level object with ``trades`` plus a small metadata block::
+        ``run_metadata`` is merged into the ``summary`` block.  When
+        the export feeds the divergence harness, the comparison side
+        needs to know WHICH backtest produced the trades — different
+        partial-fill / tick-exit / realism / market-type settings
+        produce different decisions for the same strategy.  Stamping
+        the run context into the JSON makes the gate auditable.
+
+        Output shape::
 
             {
               "strategy_name": "EMACrossMACDTrend",
               "symbol":        "AVAXUSDT",
               "params":        {...},
-              "summary":       {"total_return_pct": ..., "sharpe": ...},
+              "summary":       {<core metrics> + <runtime context>},
               "trades":        [<round-trip dicts from Backtest/metrics>],
             }
-
-        Without this hook the divergence harness has nothing to
-        consume on the backtest side and the promotion gate is
-        meaningless.
         """
         import json
         import os
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        meta = result.metadata or {}
+        summary: Dict[str, Any] = {
+            "initial_capital": result.initial_capital,
+            "final_equity": result.final_equity,
+            "total_return_pct": result.total_return_pct,
+            "sharpe_ratio": result.sharpe_ratio,
+            "max_drawdown": result.max_drawdown,
+            "total_trades": result.total_trades,
+            "win_rate": result.win_rate,
+            "profit_factor": result.profit_factor,
+            # Engine-side metadata so the divergence reader can
+            # confirm which realism stack produced these trades.
+            "partial_fills_enabled": meta.get("partial_fills_enabled"),
+            "partial_fills_count": meta.get("partial_fills"),
+            "avg_fill_ratio": meta.get("avg_fill_ratio"),
+            "tick_exit_count": meta.get("tick_exit_count"),
+            "total_fee_cost": meta.get("total_fee_cost"),
+            "total_spread_cost": meta.get("total_spread_cost"),
+            "total_slippage_cost": meta.get("total_slippage_cost"),
+        }
+        if run_metadata:
+            # User-supplied context (CLI flags, realism YAML, etc.) —
+            # never overwrite engine-reported metrics.
+            for k, v in run_metadata.items():
+                summary.setdefault(k, v)
         payload = {
             "strategy_name": strategy_name or result.strategy_name or "",
             "symbol": symbol,
             "params": result.params or {},
-            "summary": {
-                "initial_capital": result.initial_capital,
-                "final_equity": result.final_equity,
-                "total_return_pct": result.total_return_pct,
-                "sharpe_ratio": result.sharpe_ratio,
-                "max_drawdown": result.max_drawdown,
-                "total_trades": result.total_trades,
-                "win_rate": result.win_rate,
-                "profit_factor": result.profit_factor,
-            },
+            "summary": summary,
             "trades": list(result.trades or []),
         }
         with open(path, "w", encoding="utf-8") as f:

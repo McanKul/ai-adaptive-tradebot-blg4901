@@ -130,6 +130,19 @@ def _add_backtest_parser(subparsers):
                    help="Write the round-trip trade list to JSON for the "
                         "backtest-vs-live divergence harness")
 
+    # Partial fills — backtest defaults to clean fills.  Turning these
+    # on with ``--enable-partial-fills`` exposes the strategy to the
+    # liquidity-ratio fill model already implemented in the engine
+    # (see ``Backtest/execution_models.py``).  The same knobs can be
+    # set in the realism YAML; CLI flags win for one-off comparisons.
+    p.add_argument("--enable-partial-fills", action="store_true", default=None,
+                   help="Turn on partial-fill simulation (engine default off)")
+    p.add_argument("--liquidity-scale", type=float, default=None,
+                   help="Fill ratio = bar.volume / (qty * liquidity_scale); "
+                        "lower = stricter liquidity (default 10.0)")
+    p.add_argument("--min-fill-ratio", type=float, default=None,
+                   help="Below this ratio orders are rejected (default 0.1)")
+
     # Cross-validation
     p.add_argument("--cv-method", default="none",
                    choices=["none", "purged_kfold", "walk_forward", "cpcv"],
@@ -208,18 +221,40 @@ def _cmd_backtest(args):
         data_dir=args.data_dir,
         realism_config_path=args.realism_config,
         composite_spec_path=composite_spec,
+        enable_partial_fills=args.enable_partial_fills,
+        liquidity_scale=args.liquidity_scale,
+        min_fill_ratio=args.min_fill_ratio,
     )
     svc.print_result(result, symbol=args.symbol)
 
     # --export-trades: serialise the trade list for the divergence
     # harness.  This is the missing rung between backtest and live
     # promotion gates — without it ``compare_backtest_live.py`` has
-    # nothing to consume on the backtest side.
+    # nothing to consume on the backtest side.  The runtime context
+    # (data type, partial-fill state, exit knobs, realism YAML) is
+    # passed alongside so the JSON tells you WHICH backtest produced
+    # the trades — without it the divergence run is comparing
+    # apples to oranges.
     export_path = getattr(args, "export_trades", None)
     if export_path:
-        svc.export_trades(result, export_path,
-                           strategy_name=args.strategy or "composite",
-                           symbol=args.symbol)
+        svc.export_trades(
+            result, export_path,
+            strategy_name=args.strategy or "composite",
+            symbol=args.symbol,
+            run_metadata={
+                "timeframe": args.timeframe,
+                "data_dir": args.data_dir,
+                "realism_config": args.realism_config,
+                "tick_exit_enabled": bool(args.tick_exit),
+                "partial_fills_cli": args.enable_partial_fills,
+                "liquidity_scale_cli": args.liquidity_scale,
+                "min_fill_ratio_cli": args.min_fill_ratio,
+                "leverage": args.leverage,
+                "leverage_mode": args.leverage_mode,
+                "tp_pct_cli": args.tp_pct,
+                "sl_pct_cli": args.sl_pct,
+            },
+        )
 
 
 # ── Subcommand: live ─────────────────────────────────────────────────

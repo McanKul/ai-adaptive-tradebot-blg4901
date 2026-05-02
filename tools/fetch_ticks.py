@@ -248,10 +248,9 @@ Note: Data is downloaded from https://data.binance.vision/ (free, no API key nee
                 print(f"  - {err}")
         
         # Show output location(s) and per-symbol verification.  Earlier
-        # versions hit ``args.symbol.upper()`` here unconditionally,
-        # which raised ``AttributeError`` when only ``--symbols`` was
-        # supplied (args.symbol stays None).  Iterate the resolved list
-        # instead.
+        # versions dereferenced the single-symbol arg here, which raised
+        # AttributeError whenever only --symbols was supplied (the
+        # singular slot stayed None).  Iterate the resolved list instead.
         for sym in symbols:
             output_path = Path(args.output) / sym
             print(f"\nData saved to: {output_path}/")

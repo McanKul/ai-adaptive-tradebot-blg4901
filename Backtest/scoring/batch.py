@@ -297,7 +297,10 @@ class BatchBacktest:
         if splitter is None:
             start_ns = self.config.data.start_ts_ns
             end_ns = self.config.data.end_ts_ns
-            if not start_ns or not end_ns:
+            # Use ``is None`` rather than truthiness so 0 (a legitimate
+            # start_ts in synthetic test data) doesn't trigger the
+            # inference path.
+            if start_ns is None or end_ns is None:
                 inferred = self._infer_tick_range()
                 if inferred is None:
                     raise ValueError(

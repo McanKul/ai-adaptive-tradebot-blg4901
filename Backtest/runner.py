@@ -215,9 +215,11 @@ class BacktestRunner:
         # Run backtest
         result = engine.run(strategy)
         
+        # total_return_pct is already a percentage value; using :.2f%
+        # rather than :.2% (which would re-multiply by 100).
         log.info(
             f"Run #{self._run_count} complete: "
-            f"return={result.total_return_pct:.2%}, "
+            f"return={result.total_return_pct:+.2f}%, "
             f"sharpe={result.sharpe_ratio:.2f}, "
             f"drawdown={result.max_drawdown_pct:.1f}%"
         )
