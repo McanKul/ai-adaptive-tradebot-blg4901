@@ -64,14 +64,16 @@ exit:
   use_exchange_orders: true     # server-side STOP_MARKET / TAKE_PROFIT
 
 # ── Pre-trade risk ───────────────────────────────────────────────────
+# First-real-money discipline: ONE position at a time.  Promote to 2
+# only after the canary has run 7 clean days (see promotion checklist).
 risk:
-  max_concurrent_positions: 2
+  max_concurrent_positions: 1
   max_position_notional: 250.0
   max_leverage: 5
 
 # ── Account-level risk + daily-loss + cooldown (Phase A) ─────────────
 global_risk:
-  max_concurrent_positions: 2
+  max_concurrent_positions: 1
   max_total_exposure_usd: 250.0
   max_account_drawdown_pct: 0.05    # 5% peak-to-trough kill
   max_daily_loss: 30.0              # USD

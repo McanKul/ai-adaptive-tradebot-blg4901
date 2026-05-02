@@ -151,6 +151,49 @@ class LiveEngine:
                 "sentiment will be logged but NOT used for trading"
             )
 
+    # ── Realised cost accounting (Phase B4 follow-up) ─────────────────
+
+    async def _apply_realised_costs(self, pos) -> None:
+        """Populate ``pos.exit_fee_usd`` and ``pos.funding_usd`` from
+        the broker before the CSV row is written.
+
+        Entry-side commission already lands at fill time
+        (``open_position`` Phase C1 path).  This hook covers the
+        exit leg + the funding payments accrued while the position
+        was open.  Best-effort: any broker error logs and leaves the
+        attribute at its current value so gross-only logging still
+        works.
+        """
+        try:
+            since_ms = int((getattr(pos, "open_ts", time.time())) * 1000)
+            until_ms = int((getattr(pos, "exit_ts", None) or time.time()) * 1000) + 1000
+
+            # Total commission across BOTH legs, then subtract whatever
+            # the entry leg already recorded so we don't double-count.
+            try:
+                total_fee = await self.broker.get_realised_commission(
+                    pos.symbol, since_ms=since_ms, until_ms=until_ms,
+                )
+            except Exception as e:
+                log.debug("realised commission fetch failed for %s: %s",
+                          pos.symbol, e)
+                total_fee = 0.0
+
+            entry_fee = float(getattr(pos, "entry_fee_usd", 0.0) or 0.0)
+            exit_fee = max(0.0, total_fee - entry_fee)
+            pos.exit_fee_usd = exit_fee
+
+            try:
+                pos.funding_usd = await self.broker.get_funding_paid(
+                    pos.symbol, since_ms=since_ms, until_ms=until_ms,
+                )
+            except Exception as e:
+                log.debug("funding fetch failed for %s: %s", pos.symbol, e)
+                # Leave existing value (default 0) — don't overwrite
+                # any value the strategy may have set manually.
+        except Exception as e:  # pragma: no cover — top-level guard
+            log.warning("apply_realised_costs unexpected: %s", e)
+
     # ── Reconciliation (drift detection) ──────────────────────────────
 
     async def _reconciliation_loop(self) -> None:
@@ -620,6 +663,12 @@ class LiveEngine:
                 # this commit ``LiveGlobalRisk.record_pnl`` was never
                 # called and the daily counter stayed at 0 forever.
                 for pos in self.supervisor.history[prev_history_len:]:
+                    # Realised cost accounting: pull exit-leg commission
+                    # and funding payments from the broker before the
+                    # CSV row is written.  Best-effort — broker errors
+                    # leave the values at 0 so we still log gross PnL.
+                    await self._apply_realised_costs(pos)
+
                     self.metrics.record(pos)
                     if pos.exit is not None:
                         pnl = pos.unrealized_pnl(pos.exit)

@@ -58,6 +58,25 @@ class IBroker(ABC):
         """
         return float("inf")
 
+    # ---- realised cost accounting hooks (Phase B4 follow-up) ----
+    # These are intentionally OPTIONAL with safe defaults so brokers
+    # that don't expose the data (DryBroker, test stubs) keep working.
+    # Live ``BinanceBroker`` overrides both to surface the real numbers.
+    async def get_realised_commission(
+        self, symbol: str, since_ms: int, until_ms: int = 0,
+    ) -> float:
+        """Sum of realised USDT commissions over the [since, until]
+        window for *symbol*.  ``until_ms=0`` means "now".  Defaults to
+        0 so summary CSVs degrade to gross-only rather than crashing."""
+        return 0.0
+
+    async def get_funding_paid(
+        self, symbol: str, since_ms: int, until_ms: int = 0,
+    ) -> float:
+        """Net funding USDT paid (positive) or received (negative)
+        over the window.  Default 0."""
+        return 0.0
+
     # ---- fill confirmation (Phase C1) ----
     # Default implementation lives on the dataclass via duck-typing —
     # both BinanceBroker and DryBroker override.  Returns a dict with

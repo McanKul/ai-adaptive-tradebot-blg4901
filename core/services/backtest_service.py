@@ -343,6 +343,58 @@ class BacktestService:
         print("=" * 70)
 
     # ------------------------------------------------------------------
+    # Trade export (divergence gate)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def export_trades(
+        result: BacktestResult,
+        path: str,
+        strategy_name: str = "",
+        symbol: str = "",
+    ) -> None:
+        """Serialise round-trip trades + run metadata to JSON.
+
+        Output shape matches the reader in
+        ``tools/compare_backtest_live.py:load_backtest_trades`` — a
+        top-level object with ``trades`` plus a small metadata block::
+
+            {
+              "strategy_name": "EMACrossMACDTrend",
+              "symbol":        "AVAXUSDT",
+              "params":        {...},
+              "summary":       {"total_return_pct": ..., "sharpe": ...},
+              "trades":        [<round-trip dicts from Backtest/metrics>],
+            }
+
+        Without this hook the divergence harness has nothing to
+        consume on the backtest side and the promotion gate is
+        meaningless.
+        """
+        import json
+        import os
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        payload = {
+            "strategy_name": strategy_name or result.strategy_name or "",
+            "symbol": symbol,
+            "params": result.params or {},
+            "summary": {
+                "initial_capital": result.initial_capital,
+                "final_equity": result.final_equity,
+                "total_return_pct": result.total_return_pct,
+                "sharpe_ratio": result.sharpe_ratio,
+                "max_drawdown": result.max_drawdown,
+                "total_trades": result.total_trades,
+                "win_rate": result.win_rate,
+                "profit_factor": result.profit_factor,
+            },
+            "trades": list(result.trades or []),
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, default=str)
+        log.info("Exported %d trades to %s", len(payload["trades"]), path)
+
+    # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 

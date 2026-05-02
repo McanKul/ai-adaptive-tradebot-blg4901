@@ -342,9 +342,44 @@ class TestSplitterCompatibility:
                 # train_ranges should be a list
                 assert isinstance(train_ranges, list)
                 assert all(isinstance(r, TimeRange) for r in train_ranges)
-                
+
                 # test_data is TimeRange or list of TimeRange
                 if isinstance(test_data, list):
                     assert all(isinstance(r, TimeRange) for r in test_data)
                 else:
                     assert isinstance(test_data, TimeRange)
+
+
+class TestWalkForwardFailLoud:
+    """Walk-forward must raise when the data range is too short for one
+    fold.  Previously it silently returned an empty iterator; downstream
+    BatchBacktest graded every parameter combo against zero out-of-
+    sample folds and the aggregate scores were meaningless."""
+
+    def test_train_plus_test_exceeds_range_raises(self):
+        # 5 day range, train 3d + embargo + test 4d → cannot fit one fold
+        with pytest.raises(ValueError, match="too short for one fold"):
+            list(WalkForwardSplit(
+                start_ns=0, end_ns=5 * DAY_NS,
+                train_duration_ns=3 * DAY_NS,
+                test_duration_ns=4 * DAY_NS,
+            ).split())
+
+    def test_just_fitting_one_fold_does_not_raise(self):
+        # 10 day range, train 5d + test 5d (embargo_pct=0) — exactly fits
+        out = list(WalkForwardSplit(
+            start_ns=0, end_ns=10 * DAY_NS,
+            train_duration_ns=5 * DAY_NS,
+            test_duration_ns=5 * DAY_NS,
+            embargo_pct=0.0,
+        ).split())
+        assert len(out) >= 1
+
+    def test_expanding_mode_also_fail_loud(self):
+        with pytest.raises(ValueError, match="too short for one fold"):
+            list(WalkForwardSplit(
+                start_ns=0, end_ns=2 * DAY_NS,
+                train_duration_ns=3 * DAY_NS,
+                test_duration_ns=2 * DAY_NS,
+                expanding=True,
+            ).split())

@@ -22,7 +22,7 @@ strategy:
     ema_period: 200                # EMA period for trend filter
     adx_period: 14
     adx_threshold: 25.0
-    allow_reversal: true           # Allow reversing position on opposite signal
+    allow_reversal: false          # off until reversal-fill confirmation lands
 
 # ---------- symbols & timeframe ----------
 symbols:

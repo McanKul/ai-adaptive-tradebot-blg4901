@@ -239,6 +239,67 @@ class BinanceBroker(IBroker):
             self.log.warning("get_24h_volume %s failed: %s", symbol, e)
             return 0.0
 
+    # ───── Realised cost accounting hooks ─────
+    async def get_realised_commission(
+        self, symbol: str, since_ms: int, until_ms: int = 0,
+    ) -> float:
+        """Sum commissions on user trades for *symbol* in the window.
+
+        Uses ``futures_account_trades`` (also called ``GET /fapi/v1/userTrades``).
+        Returns the absolute USDT-equivalent commission summed over
+        every fill the broker has logged for the position lifetime.
+        """
+        params = {"symbol": symbol, "startTime": int(since_ms)}
+        if until_ms:
+            params["endTime"] = int(until_ms)
+        await self._rl.acquire(weight=5)
+        try:
+            trades = await self._client.futures_account_trades(**params)
+        except BinanceAPIException as e:
+            self.log.warning("get_realised_commission %s: %s", symbol, e)
+            return 0.0
+        total = 0.0
+        for t in trades or []:
+            try:
+                total += float(t.get("commission") or 0.0)
+            except (TypeError, ValueError):
+                continue
+        return total
+
+    async def get_funding_paid(
+        self, symbol: str, since_ms: int, until_ms: int = 0,
+    ) -> float:
+        """Net funding paid in USDT over the window.
+
+        Reads ``futures_income_history`` filtered by
+        ``incomeType="FUNDING_FEE"``.  Sign convention: positive value
+        means we PAID funding; negative means we received it (because
+        Binance reports the income side; we negate so PnL math reads
+        cleanly as ``pnl_net = pnl_gross - fees - funding``).
+        """
+        params = {
+            "symbol": symbol,
+            "incomeType": "FUNDING_FEE",
+            "startTime": int(since_ms),
+        }
+        if until_ms:
+            params["endTime"] = int(until_ms)
+        await self._rl.acquire(weight=10)
+        try:
+            rows = await self._client.futures_income_history(**params)
+        except BinanceAPIException as e:
+            self.log.warning("get_funding_paid %s: %s", symbol, e)
+            return 0.0
+        net = 0.0
+        for r in rows or []:
+            try:
+                net += float(r.get("income") or 0.0)
+            except (TypeError, ValueError):
+                continue
+        # Binance's "income" is positive when we received funding; we
+        # want the COST side, so negate.
+        return -net
+
     # Phase C3 — internal hook for the rejection circuit-breaker.
     def _record_rejection(self, reason: str) -> None:
         if self._rejection_counter is None:

@@ -29,7 +29,8 @@ strategy:
     volume_filter: true
     volume_period: 20
     risk_pct: 0.005
-    allow_reversal: true
+    allow_reversal: false        # close+open is two non-atomic legs;
+                                 # see EMACrossMACDTrend docstring
     exit_on_macd_cross: true
     rsi_period: 14
     rsi_overbought: 75.0
@@ -50,7 +51,7 @@ symbols:
   - APTUSDT
   - SUIUSDT
   - INJUSDT
-  - FTMUSDT
+  # FTM rebranded to S on Binance (2024) — re-add as SUSDT once stable
   - ATOMUSDT
   - RUNEUSDT
 

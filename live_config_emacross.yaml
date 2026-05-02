@@ -34,7 +34,7 @@ strategy:
     volume_filter: true               # Sweep: noise filtresi, her zaman acik
     volume_period: 20                 # 20-bar volume SMA
     risk_pct: 0.005                   # %0.5 risk/trade
-    allow_reversal: true              # Ters yonde girise izin ver
+    allow_reversal: false             # close+open non-atomic; off until B5 lands
     exit_on_macd_cross: true          # KRITIK: kapali → %23 basari, acik → %66
     # Sinyal guclendiriciler
     rsi_period: 14                    # RSI hesaplama periyodu
@@ -63,7 +63,7 @@ symbols:
   - SEIUSDT
   - INJUSDT
   - TIAUSDT
-  - FTMUSDT
+  # FTM rebranded to S on Binance (2024) — re-add as SUSDT once stable
   - ATOMUSDT
   - FILUSDT
   - RUNEUSDT

@@ -125,6 +125,11 @@ def _add_backtest_parser(subparsers):
     p.add_argument("--data-dir", default="./data/ticks", help="Tick data directory")
     p.add_argument("--realism-config", default=None, help="Path to realism YAML")
 
+    # Trade export — feeds tools/compare_backtest_live.py as a divergence gate
+    p.add_argument("--export-trades", default=None, metavar="PATH",
+                   help="Write the round-trip trade list to JSON for the "
+                        "backtest-vs-live divergence harness")
+
     # Cross-validation
     p.add_argument("--cv-method", default="none",
                    choices=["none", "purged_kfold", "walk_forward", "cpcv"],
@@ -205,6 +210,16 @@ def _cmd_backtest(args):
         composite_spec_path=composite_spec,
     )
     svc.print_result(result, symbol=args.symbol)
+
+    # --export-trades: serialise the trade list for the divergence
+    # harness.  This is the missing rung between backtest and live
+    # promotion gates — without it ``compare_backtest_live.py`` has
+    # nothing to consume on the backtest side.
+    export_path = getattr(args, "export_trades", None)
+    if export_path:
+        svc.export_trades(result, export_path,
+                           strategy_name=args.strategy or "composite",
+                           symbol=args.symbol)
 
 
 # ── Subcommand: live ─────────────────────────────────────────────────
