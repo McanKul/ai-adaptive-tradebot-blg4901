@@ -111,6 +111,12 @@ execution:
   preload_batch: 10
 
 # ---------- news sentiment ----------
+# news:
+#   enabled: true
+#   sentiment_provider: "gemini"
+#   high_sentiment_threshold: 0.75
+#   low_sentiment_threshold: 0.25
+#   margin_boost_max: 0.5
 news:
   enabled: false
 

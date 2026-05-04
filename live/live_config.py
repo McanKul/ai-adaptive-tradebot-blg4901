@@ -293,14 +293,21 @@ class ReconciliationConfig:
 # ---------------------------------------------------------------------------
 @dataclass
 class NewsConfig:
-    """News sentiment analysis configuration."""
+    """News sentiment analysis configuration.
+
+    The news engine adjusts position *margin* based on sentiment strength
+    rather than gating trades.  When sentiment strongly confirms the
+    strategy direction the margin (and thus position size) is increased.
+    """
     enabled: bool = False
     sentiment_provider: str = "gemini"      # "gemini" | "openai"
     api_key: Optional[str] = None           # Override env var (GOOGLE_API_KEY / OPENAI_API_KEY)
     refresh_interval: int = 300             # Seconds between sentiment refreshes
     news_limit: int = 5                     # Max articles per symbol per fetch
-    buy_threshold: float = 0.6             # Sentiment > this + BUY signal → LONG
-    sell_threshold: float = 0.4            # Sentiment < this + SELL signal → SHORT
+    # Margin adjustment thresholds
+    high_sentiment_threshold: float = 0.75  # Sentiment above this boosts LONG margin
+    low_sentiment_threshold: float = 0.25   # Sentiment below this boosts SHORT margin
+    margin_boost_max: float = 0.5           # Max fractional margin increase (0.5 = +50%)
 
 
 # ---------------------------------------------------------------------------

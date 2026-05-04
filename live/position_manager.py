@@ -310,6 +310,7 @@ class PositionManager:
         leverage: int,
         timeframe: str,
         levels: Optional[Any] = None,
+        margin_multiplier: float = 1.0,
     ) -> bool:
         """
         Open a new position using SizingConfig & ExitConfig.
@@ -321,6 +322,9 @@ class PositionManager:
             leverage: Leverage multiplier
             timeframe: Bar timeframe
             levels: Optional SupportResistanceResult
+            margin_multiplier: Factor >= 1.0 applied to margin_usd.
+                Driven by news sentiment — strongly confirming sentiment
+                increases the position size.
         """
         key = (symbol, strategy_name)
         if key in self.open_positions or len(self.open_positions) >= self.max_open:
@@ -349,8 +353,18 @@ class PositionManager:
         mark_price = await self.broker.get_mark_price(symbol)
         intended_price = mark_price
 
-        # 2) Compute quantity from SizingConfig
-        raw_qty = self.sizing_cfg.compute_qty(mark_price)
+        # 2) Compute quantity from SizingConfig (with margin boost)
+        effective_sizing = self.sizing_cfg
+        if margin_multiplier > 1.0:
+            import copy as _copy
+            effective_sizing = _copy.copy(self.sizing_cfg)
+            effective_sizing.margin_usd = self.sizing_cfg.margin_usd * margin_multiplier
+            log.info(
+                "%s margin boosted: $%.2f → $%.2f (x%.2f)",
+                symbol, self.sizing_cfg.margin_usd,
+                effective_sizing.margin_usd, margin_multiplier,
+            )
+        raw_qty = effective_sizing.compute_qty(mark_price)
         qty, tick, min_notional = await self._symbol_filters(symbol, raw_qty)
         if qty <= 0:
             log.warning("%s qty rounded to 0 — skipping", symbol)
@@ -1258,6 +1272,7 @@ class LiveSupervisor:
         leverage: int,
         timeframe: str,
         levels=None,
+        margin_multiplier: float = 1.0,
     ) -> bool:
         # Global concurrent position limit — hard gate before any exchange call
         total_open = sum(len(pm.open_positions) for pm in self._managers.values())
@@ -1277,6 +1292,7 @@ class LiveSupervisor:
             leverage=leverage,
             timeframe=timeframe,
             levels=levels,
+            margin_multiplier=margin_multiplier,
         )
         if ok:
             self._persist()

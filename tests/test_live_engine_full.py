@@ -310,13 +310,17 @@ async def feed_bar(engine: LiveEngine, bar_event: dict):
             exit_type=exit_reason or "STRATEGY_EXIT",
         )
 
-    final_sig = await engine._get_combined_signal(sym, strategy_sig)
+    final_sig = int(strategy_sig) if strategy_sig is not None else None
     if final_sig and not risk_block_entries:
         leverage = engine.cfg.leverage_for(sym)
+        margin_multiplier = await engine._get_sentiment_margin_multiplier(
+            sym, final_sig,
+        )
         await engine.supervisor.open_position(
             symbol=sym, side=final_sig,
             strategy_name=engine.cfg.name,
             leverage=leverage, timeframe=tf,
+            margin_multiplier=margin_multiplier,
         )
 
     await engine.supervisor.update_symbol(sym)
