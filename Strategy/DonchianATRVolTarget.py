@@ -77,18 +77,28 @@ class Strategy(IStrategy):
         self.allow_reversal = allow_reversal
         self.max_holding_bars = max_holding_bars
 
-        # Internal state
-        self._entry_bar_index: int = 0
-        self._entry_price: float = 0.0
-        self._highest_since_entry: float = -math.inf
-        self._lowest_since_entry: float = math.inf
-        self._bar_count: int = 0
+        # Internal state — per-symbol so multi-coin live/dry-run/backtest
+        # runs do not let one symbol's bar pollute another's tracking.
+        self._state: Dict[str, Dict[str, Any]] = {}
+
+    def _get_state(self, symbol: str) -> Dict[str, Any]:
+        """Get or create per-symbol state."""
+        if symbol not in self._state:
+            self._state[symbol] = {
+                "entry_bar_index": 0,
+                "entry_price": 0.0,
+                "highest_since_entry": -math.inf,
+                "lowest_since_entry": math.inf,
+                "bar_count": 0,
+            }
+        return self._state[symbol]
 
     # ------------------------------------------------------------------
     # IStrategy interface
     # ------------------------------------------------------------------
     def on_bar(self, bar: Bar, ctx: Any) -> StrategyDecision:  # noqa: C901
-        self._bar_count += 1
+        st = self._get_state(bar.symbol)
+        st["bar_count"] += 1
         ohlcv = ctx.get_ohlcv()
         if ohlcv is None:
             return StrategyDecision.no_action()
@@ -146,16 +156,16 @@ class Strategy(IStrategy):
         # ---- trailing stop for open position ----
         if position > 1e-10:
             # Long
-            self._highest_since_entry = max(self._highest_since_entry, float(bar.high))
-            stop_price = self._highest_since_entry - self.atr_mult * atr
+            st["highest_since_entry"] = max(st["highest_since_entry"], float(bar.high))
+            stop_price = st["highest_since_entry"] - self.atr_mult * atr
             features["stop_price"] = stop_price
             if bar.low <= stop_price:
                 orders.append(self._exit_order(bar, position))
                 return self._decision(orders, features, {"exit_reason": "trailing_stop_long"})
         elif position < -1e-10:
             # Short
-            self._lowest_since_entry = min(self._lowest_since_entry, float(bar.low))
-            stop_price = self._lowest_since_entry + self.atr_mult * atr
+            st["lowest_since_entry"] = min(st["lowest_since_entry"], float(bar.low))
+            stop_price = st["lowest_since_entry"] + self.atr_mult * atr
             features["stop_price"] = stop_price
             if bar.high >= stop_price:
                 orders.append(self._exit_order(bar, position))
@@ -163,7 +173,7 @@ class Strategy(IStrategy):
 
         # ---- time stop ----
         if self.max_holding_bars is not None and abs(position) > 1e-10:
-            bars_held = self._bar_count - self._entry_bar_index
+            bars_held = st["bar_count"] - st["entry_bar_index"]
             if bars_held >= self.max_holding_bars:
                 orders.append(self._exit_order(bar, position))
                 return self._decision(orders, features, {"exit_reason": "time_stop"})
@@ -184,7 +194,7 @@ class Strategy(IStrategy):
                           "atr": atr, "donchian_upper": upper,
                           "donchian_lower": lower, "qty_method": "vol_target"},
             ))
-            self._register_entry(close)
+            self._register_entry(st, close)
             return self._decision(orders, features, {"entry_side": "long"})
 
         if close < lower and filter_pass_short and position >= -1e-10:
@@ -202,26 +212,22 @@ class Strategy(IStrategy):
                           "atr": atr, "donchian_upper": upper,
                           "donchian_lower": lower, "qty_method": "vol_target"},
             ))
-            self._register_entry(close)
+            self._register_entry(st, close)
             return self._decision(orders, features, {"entry_side": "short"})
 
         return self._decision([], features, {})
 
     def reset(self) -> None:
-        self._entry_bar_index = 0
-        self._entry_price = 0.0
-        self._highest_since_entry = -math.inf
-        self._lowest_since_entry = math.inf
-        self._bar_count = 0
+        self._state.clear()
 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
-    def _register_entry(self, price: float) -> None:
-        self._entry_bar_index = self._bar_count
-        self._entry_price = price
-        self._highest_since_entry = price
-        self._lowest_since_entry = price
+    def _register_entry(self, st: Dict[str, Any], price: float) -> None:
+        st["entry_bar_index"] = st["bar_count"]
+        st["entry_price"] = price
+        st["highest_since_entry"] = price
+        st["lowest_since_entry"] = price
 
     @staticmethod
     def _exit_order(bar: Bar, signed_position: float) -> Order:

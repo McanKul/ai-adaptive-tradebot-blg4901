@@ -34,6 +34,9 @@ class IClient(ABC):
 
     @abstractmethod
     async def futures_change_leverage(self, symbol: str, leverage: int) -> Any: ...
-    
+
+    @abstractmethod
+    async def futures_ticker(self, symbol: str) -> Dict[str, Any]: ...
+
     @abstractmethod
     async def close_connection(self): ...

@@ -20,6 +20,10 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Optional, List, Dict, Any
 
+import pytest
+
+pytestmark = pytest.mark.requires_binance
+
 # ── Mock binance before any project imports ──────────────────────────
 sys.modules["binance"] = MagicMock()
 sys.modules["binance.client"] = MagicMock()

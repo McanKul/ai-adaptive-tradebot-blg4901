@@ -243,25 +243,44 @@ class SweepService:
             max_cv_std=max_cv_std if max_cv_std is not None else float("inf"),
         )
         selector = Selector(criteria)
-        # apply_filters=False when no filter knobs were set, so we still
-        # show the full ranking
+        # Always rank ALL combos for the CSV — filters only narrow the
+        # printed top-N.  Earlier behaviour silently dropped the CSV when
+        # every combo failed a filter (e.g. all kombolar 30 trade altında),
+        # which left the user with nothing to inspect.
         any_filter = any(v is not None for v in
                          [min_trades, min_sharpe, max_drawdown, min_win_rate, max_cv_std])
-        ranked = selector.select_top_k(
-            batch_result, k=len(batch_result.results), apply_filters=any_filter,
+        unfiltered = selector.select_top_k(
+            batch_result, k=len(batch_result.results), apply_filters=False,
         )
+        if any_filter:
+            filtered = selector.select_top_k(
+                batch_result, k=len(batch_result.results), apply_filters=True,
+            )
+        else:
+            filtered = unfiltered
 
         # Reshape to (params, result, score) for backwards compatibility
-        results: List[RankedResult] = [(p, r, s) for r, s, p in ranked]
+        all_results: List[RankedResult] = [(p, r, s) for r, s, p in unfiltered]
+        results: List[RankedResult] = [(p, r, s) for r, s, p in filtered]
 
-        # 6) CSV export + print
+        # 6) CSV export — always write the full ranking so failed-filter
+        # runs leave a debuggable trail.
         if csv_output:
-            self._write_csv(csv_output, results, cv_method=cv_method)
-            log.info("Results saved to %s", csv_output)
+            self._write_csv(csv_output, all_results, cv_method=cv_method)
+            log.info(
+                "Results saved to %s (%d combos, %d passed filters)",
+                csv_output, len(all_results), len(results),
+            )
 
         self.print_top_results(results, top_n=top_n, cv_method=cv_method)
         if results:
             self._print_best(results[0], cv_method=cv_method)
+        elif all_results:
+            log.warning(
+                "All %d combos were filtered out — printing best-of-unfiltered "
+                "for inspection:", len(all_results),
+            )
+            self._print_best(all_results[0], cv_method=cv_method)
 
         # Selection-bias warning
         if batch_result.selection_bias_report:

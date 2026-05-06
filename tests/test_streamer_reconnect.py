@@ -2,6 +2,10 @@
 import sys, os, asyncio, types
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+pytestmark = pytest.mark.requires_network
+
 # Mock binance — must set before importing streamer
 binance_mod = types.SimpleNamespace()
 binance_mod.BinanceSocketManager = MagicMock(return_value=MagicMock())

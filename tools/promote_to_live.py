@@ -43,7 +43,47 @@ import math
 import os
 import subprocess
 import sys
-from typing import List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+
+def write_promotion_stamp(
+    out_dir: str,
+    run_id: str,
+    *,
+    config: str,
+    strategy: str,
+    symbol: str,
+    timeframe: str,
+    live_trades: str,
+    backtest_export: str,
+    eod_rollup: str,
+    thresholds: Dict[str, Any],
+) -> str:
+    """Write a machine-readable promotion-gate stamp.
+
+    `app.py live` refuses to start without a stamp at
+    ``{out_dir}/promotion_gate_{run_id}.json`` (unless the user passes
+    ``--force-live``).  The stamp records which artefacts cleared which
+    thresholds so the live launch is auditable after the fact.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    stamp = {
+        "run_id": run_id,
+        "config": config,
+        "strategy": strategy,
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "passed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "live_trades": live_trades,
+        "backtest_export": backtest_export,
+        "eod_rollup": eod_rollup,
+        "thresholds": thresholds,
+    }
+    path = os.path.join(out_dir, f"promotion_gate_{run_id}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(stamp, f, indent=2, sort_keys=True)
+    return path
 
 
 def _run(cmd: List[str], step: str) -> int:
@@ -188,6 +228,25 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"  - {f}")
         return 4
 
+    stamp_path = write_promotion_stamp(
+        args.out_dir,
+        args.run_id,
+        config=args.config,
+        strategy=args.strategy,
+        symbol=args.symbol,
+        timeframe=args.timeframe,
+        live_trades=args.live_trades,
+        backtest_export=bt_json,
+        eod_rollup=eod_csv,
+        thresholds={
+            "match_rate": args.match_rate,
+            "max_side_mismatch": args.max_side_mismatch,
+            "max_pnl_diff_avg": args.max_pnl_diff_avg,
+            "min_profit_factor": args.min_profit_factor,
+            "max_drawdown_pct": args.max_drawdown_pct,
+        },
+    )
+
     print("\n" + "=" * 70)
     print("GATE PASS — every check cleared.  Bot is cleared for live.")
     print("=" * 70)
@@ -195,6 +254,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         f"  artefacts:\n"
         f"    backtest export   : {bt_json}\n"
         f"    EOD rollup        : {eod_csv}\n"
+        f"    promotion stamp   : {stamp_path}\n"
     )
     return 0
 
