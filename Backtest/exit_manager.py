@@ -46,6 +46,7 @@ class ExitReason(Enum):
     TRAILING_STOP = "TRAILING"
     MAX_HOLDING_BARS = "MAX_BARS"
     LIQUIDATION = "LIQUIDATION"
+    STRATEGY_STOP = "STRATEGY_STOP"  # Strategy-published trail level breached intra-bar
 
 
 @dataclass
@@ -103,7 +104,13 @@ class PositionState:
     # Trailing stop tracking
     peak_pnl: float = 0.0
     peak_price: float = 0.0  # For longs: highest price seen; for shorts: lowest
-    
+
+    # Strategy-published trail level (e.g. ATR trailing stop).  Updated each
+    # bar by the strategy via decision.metadata["strategy_stop_price"]; the
+    # tick-exit handler reads it to fire intra-bar instead of waiting for
+    # bar close.  None = no strategy stop active.
+    strategy_stop_price: Optional[float] = None
+
     @property
     def is_long(self) -> bool:
         return self.quantity > 0
@@ -218,6 +225,13 @@ class ExitManager:
             bar_index: Current bar index
             timestamp_ns: Entry timestamp
         """
+        # Preserve any strategy stop level published during the same bar
+        # (set_strategy_stop runs at on_bar exit, register_entry runs after
+        # the entry fill — without preserving, the stop would be wiped).
+        prior_stop = (
+            self._states[symbol].strategy_stop_price
+            if symbol in self._states else None
+        )
         self._states[symbol] = PositionState(
             symbol=symbol,
             quantity=quantity,
@@ -226,6 +240,7 @@ class ExitManager:
             entry_timestamp_ns=timestamp_ns,
             peak_pnl=0.0,
             peak_price=entry_price,
+            strategy_stop_price=prior_stop,
         )
     
     def update_position(
@@ -258,6 +273,26 @@ class ExitManager:
         """Clear position state when position is closed."""
         if symbol in self._states:
             del self._states[symbol]
+
+    def set_strategy_stop(self, symbol: str, stop_price: Optional[float]) -> None:
+        """Publish or clear the strategy's intra-bar trailing-stop level.
+
+        The engine calls this after each ``on_bar`` so the tick-exit
+        handler can fire as soon as the trail level is breached, rather
+        than waiting for bar close.  Pass ``None`` to clear an active
+        strategy stop without closing the position.
+        """
+        if symbol in self._states:
+            self._states[symbol].strategy_stop_price = stop_price
+        elif stop_price is not None:
+            # Lazy-create an empty state so the level survives until
+            # register_entry fills in the rest.
+            self._states[symbol] = PositionState(
+                symbol=symbol,
+                quantity=0.0,
+                avg_entry_price=0.0,
+                strategy_stop_price=stop_price,
+            )
     
     def check_exit(
         self,
@@ -518,25 +553,34 @@ class ExitManager:
             )
         
         state = self._states[symbol]
-        
+
         # Sync state
         state.quantity = position
         state.avg_entry_price = avg_entry_price
-        
+
         # Update peak for trailing stop
         state.update_peak(tick_price)
-        
+
         # Get leverage
         leverage = self.config.leverage
-        
+
         # Calculate P&L at tick price
         pnl = state.unrealized_pnl(tick_price, leverage)
         pnl_pct = state.unrealized_pnl_pct(tick_price, leverage)
-        
+
         exit_reason = None
-        
+
+        # Strategy-published trail level — checked first so an ATR breach
+        # fires intra-bar instead of waiting for bar-close detection.
+        if state.strategy_stop_price is not None:
+            sp = state.strategy_stop_price
+            if state.is_long and tick_price <= sp:
+                exit_reason = ExitReason.STRATEGY_STOP
+            elif state.is_short and tick_price >= sp:
+                exit_reason = ExitReason.STRATEGY_STOP
+
         # Check stop loss first (more important to exit on loss)
-        if self.config.stop_loss_usd is not None:
+        if exit_reason is None and self.config.stop_loss_usd is not None:
             if pnl <= -self.config.stop_loss_usd:
                 exit_reason = ExitReason.STOP_LOSS_USD
         

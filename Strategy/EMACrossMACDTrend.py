@@ -236,37 +236,54 @@ class Strategy(IStrategy):
         }
 
         # ---- trailing stop for open position ----
+        # Trail level published via metadata so the engine's tick-exit handler
+        # can fire intra-bar; bar-close check below stays as a fallback.
+        active_stop_price: Optional[float] = None
         if position > 1e-10:
             st["highest_since_entry"] = max(st["highest_since_entry"], float(bar.high))
             stop_price = st["highest_since_entry"] - self.atr_mult * atr
             features["stop_price"] = stop_price
+            active_stop_price = stop_price
             if bar.low <= stop_price:
                 orders.append(self._exit_order(bar, position))
                 st["prev_histogram"] = curr_histogram
-                return self._decision(orders, features,
-                                      {"exit_reason": "trailing_stop_long"})
+                return self._decision(
+                    orders, features,
+                    {"exit_reason": "trailing_stop_long",
+                     "strategy_stop_price": None},
+                )
         elif position < -1e-10:
             st["lowest_since_entry"] = min(st["lowest_since_entry"], float(bar.low))
             stop_price = st["lowest_since_entry"] + self.atr_mult * atr
             features["stop_price"] = stop_price
+            active_stop_price = stop_price
             if bar.high >= stop_price:
                 orders.append(self._exit_order(bar, position))
                 st["prev_histogram"] = curr_histogram
-                return self._decision(orders, features,
-                                      {"exit_reason": "trailing_stop_short"})
+                return self._decision(
+                    orders, features,
+                    {"exit_reason": "trailing_stop_short",
+                     "strategy_stop_price": None},
+                )
 
         # ---- MACD histogram reversal exit ----
         if self.exit_on_macd_cross and abs(position) > 1e-10:
             if position > 1e-10 and curr_histogram < 0 and prev_histogram >= 0:
                 orders.append(self._exit_order(bar, position))
                 st["prev_histogram"] = curr_histogram
-                return self._decision(orders, features,
-                                      {"exit_reason": "macd_cross_exit_long"})
+                return self._decision(
+                    orders, features,
+                    {"exit_reason": "macd_cross_exit_long",
+                     "strategy_stop_price": None},
+                )
             if position < -1e-10 and curr_histogram > 0 and prev_histogram <= 0:
                 orders.append(self._exit_order(bar, position))
                 st["prev_histogram"] = curr_histogram
-                return self._decision(orders, features,
-                                      {"exit_reason": "macd_cross_exit_short"})
+                return self._decision(
+                    orders, features,
+                    {"exit_reason": "macd_cross_exit_short",
+                     "strategy_stop_price": None},
+                )
 
         # ---- time stop ----
         if self.max_holding_bars is not None and abs(position) > 1e-10:
@@ -274,8 +291,11 @@ class Strategy(IStrategy):
             if bars_held >= self.max_holding_bars:
                 orders.append(self._exit_order(bar, position))
                 st["prev_histogram"] = curr_histogram
-                return self._decision(orders, features,
-                                      {"exit_reason": "time_stop"})
+                return self._decision(
+                    orders, features,
+                    {"exit_reason": "time_stop",
+                     "strategy_stop_price": None},
+                )
 
         # ---- entry signals ----
         # Minimum histogram eşiği (ATR yüzdesi — whipsaw koruması)
@@ -313,6 +333,7 @@ class Strategy(IStrategy):
         if long_ok and position <= 1e-10:
             if position < -1e-10 and self.allow_reversal:
                 orders.append(self._exit_order(bar, position))
+            entry_stop = close - self.atr_mult * atr
             orders.append(Order(
                 symbol=bar.symbol,
                 side=OrderSide.BUY,
@@ -321,7 +342,7 @@ class Strategy(IStrategy):
                 timestamp_ns=bar.timestamp_ns,
                 strategy_id="EMACROSS_ENTRY",
                 metadata={
-                    "stop_price": close - self.atr_mult * atr,
+                    "stop_price": entry_stop,
                     "atr": atr,
                     "fast_ema": curr_fast_ema,
                     "slow_ema": curr_slow_ema,
@@ -332,11 +353,15 @@ class Strategy(IStrategy):
             ))
             self._register_entry(st, close)
             st["prev_histogram"] = curr_histogram
-            return self._decision(orders, features, {"entry_side": "long"})
+            return self._decision(
+                orders, features,
+                {"entry_side": "long", "strategy_stop_price": entry_stop},
+            )
 
         if short_ok and position >= -1e-10:
             if position > 1e-10 and self.allow_reversal:
                 orders.append(self._exit_order(bar, position))
+            entry_stop = close + self.atr_mult * atr
             orders.append(Order(
                 symbol=bar.symbol,
                 side=OrderSide.SELL,
@@ -345,7 +370,7 @@ class Strategy(IStrategy):
                 timestamp_ns=bar.timestamp_ns,
                 strategy_id="EMACROSS_ENTRY",
                 metadata={
-                    "stop_price": close + self.atr_mult * atr,
+                    "stop_price": entry_stop,
                     "atr": atr,
                     "fast_ema": curr_fast_ema,
                     "slow_ema": curr_slow_ema,
@@ -356,10 +381,17 @@ class Strategy(IStrategy):
             ))
             self._register_entry(st, close)
             st["prev_histogram"] = curr_histogram
-            return self._decision(orders, features, {"entry_side": "short"})
+            return self._decision(
+                orders, features,
+                {"entry_side": "short", "strategy_stop_price": entry_stop},
+            )
 
+        # No new orders; keep the trail level alive (or clear if flat)
         st["prev_histogram"] = curr_histogram
-        return self._decision([], features, {})
+        return self._decision(
+            [], features,
+            {"strategy_stop_price": active_stop_price},
+        )
 
     def reset(self) -> None:
         self._state.clear()
