@@ -110,6 +110,10 @@ class SweepService:
         cv_n_test_splits: int = 2,
         cv_aggregate: str = "mean",
         cv_expanding: bool = False,
+        # NEW: hyperband (successive halving)
+        cv_hyperband: bool = False,
+        cv_halving_factor: int = 2,
+        cv_min_active: int = 2,
         # NEW: realism
         realism_config_path: Optional[str] = None,
         # NEW: SearchSpace constraints (list of dicts; see _build_search_space)
@@ -197,6 +201,26 @@ class SweepService:
         t0 = time.time()
         if cv_method == "none":
             batch_result = batch.run(space)
+        elif cv_hyperband:
+            if cv_method == "cpcv":
+                raise ValueError(
+                    "cv_hyperband is incompatible with cv_method='cpcv'. "
+                    "Use 'walk_forward' or 'purged_kfold'."
+                )
+            log.info(
+                "Hyperband enabled: halving_factor=%d, min_active=%d",
+                cv_halving_factor, cv_min_active,
+            )
+            batch_result = batch.run_with_cv_hyperband(
+                param_space=space,
+                split_mode=cv_method,
+                n_splits=cv_n_splits,
+                embargo_pct=cv_embargo_pct,
+                train_pct=cv_train_pct,
+                aggregate=cv_aggregate,
+                halving_factor=cv_halving_factor,
+                min_active=cv_min_active,
+            )
         else:
             batch_result = batch.run_with_cv(
                 param_space=space,

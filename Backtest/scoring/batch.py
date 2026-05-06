@@ -510,7 +510,237 @@ class BatchBacktest:
             ],
             cv_method=split_mode,
         )
-    
+
+    def run_with_cv_hyperband(
+        self,
+        param_space: ParameterGrid | SearchSpace | List[Dict[str, Any]],
+        splitter: Optional[Union[PurgedKFold, WalkForwardSplit]] = None,
+        aggregate: str = "mean",
+        split_mode: str = "walk_forward",
+        n_splits: int = 5,
+        embargo_pct: float = 0.01,
+        train_pct: float = 0.6,
+        halving_factor: int = 2,
+        min_active: int = 2,
+    ) -> BatchResult:
+        """
+        Successive-halving CV (Hyperband-style early termination).
+
+        After each fold, drop the bottom ``1 / halving_factor`` of params
+        by mean score so far.  Surviving combos progress to the next
+        rung.  Floor at ``min_active`` params so the final rung always
+        has something to compare.
+
+        CPCV is not supported here — the per-split aggregation in CPCV
+        already wraps multiple test ranges, which collides with the
+        rung-based pruning logic.  Use :meth:`run_with_cv` for CPCV.
+
+        Returns the same :class:`BatchResult` shape as :meth:`run_with_cv`,
+        with each result's ``cv_pruned_at_fold`` metadata recording the
+        rung at which a combo was dropped (``None`` if it survived).
+        """
+        start_time = time.time()
+
+        if isinstance(param_space, (ParameterGrid, SearchSpace)):
+            params_list = list(param_space)
+        else:
+            params_list = list(param_space)
+
+        total = len(params_list)
+        if total == 0:
+            log.warning("Hyperband CV called with empty param space")
+            return BatchResult(
+                results=[], scores=[], params_list=[], rankings=[],
+                total_time_seconds=0.0,
+            )
+
+        # Splitter setup mirrors run_with_cv (excluding CPCV)
+        if splitter is None:
+            start_ns = self.config.data.start_ts_ns
+            end_ns = self.config.data.end_ts_ns
+            if start_ns is None or end_ns is None:
+                inferred = self._infer_tick_range()
+                if inferred is None:
+                    raise ValueError(
+                        "Hyperband CV needs an explicit time range. "
+                        "Set DataConfig.start_ts_ns/end_ts_ns or backfill "
+                        "tick data so the bounds can be inferred."
+                    )
+                start_ns, end_ns = inferred
+                log.info("Hyperband CV time range inferred: %d -> %d", start_ns, end_ns)
+            total_duration = end_ns - start_ns
+
+            if split_mode == "purged_kfold":
+                splitter = PurgedKFold(
+                    start_ns=start_ns, end_ns=end_ns,
+                    n_splits=n_splits, embargo_pct=embargo_pct,
+                )
+            elif split_mode == "walk_forward":
+                train_duration = int(total_duration * train_pct)
+                test_duration = int(total_duration * (1 - train_pct) / n_splits)
+                splitter = WalkForwardSplit(
+                    start_ns=start_ns, end_ns=end_ns,
+                    train_duration_ns=train_duration,
+                    test_duration_ns=test_duration,
+                    embargo_pct=embargo_pct,
+                )
+            else:
+                raise ValueError(
+                    f"Hyperband does not support split_mode={split_mode!r}; "
+                    f"use 'walk_forward' or 'purged_kfold'."
+                )
+
+        folds = list(splitter.split())
+        if any(isinstance(test_data, list) for _, test_data in folds):
+            raise ValueError(
+                "Hyperband does not support CPCV (list-valued test ranges). "
+                "Use run_with_cv() instead."
+            )
+
+        n_folds = len(folds)
+        log.info(
+            "Hyperband CV: %d params x %d rungs (halving_factor=%d, min_active=%d)",
+            total, n_folds, halving_factor, min_active,
+        )
+
+        # Per-param storage
+        fold_scores: Dict[int, List[float]] = {i: [] for i in range(total)}
+        fold_results: Dict[int, List[BacktestResult]] = {i: [] for i in range(total)}
+        pruned_at_fold: Dict[int, Optional[int]] = {i: None for i in range(total)}
+
+        active_indices: List[int] = list(range(total))
+        n_evaluations = 0
+
+        for fold_idx, (_train_ranges, test_data) in enumerate(folds):
+            log.info(
+                "  Rung %d/%d: %d active params",
+                fold_idx + 1, n_folds, len(active_indices),
+            )
+
+            for orig_idx in active_indices:
+                params = params_list[orig_idx]
+                fold_config = self._create_fold_config(test_data)
+                runner = BacktestRunner(fold_config)
+
+                try:
+                    result = runner.run_once(
+                        self.strategy_factory, params, self.strategy_name,
+                    )
+                    score = self.scorer.score(result)
+                except Exception as e:
+                    log.error(
+                        "Hyperband fold %d param idx %d failed: %s",
+                        fold_idx, orig_idx, e,
+                    )
+                    result = create_dummy_result(params, str(e))
+                    score = -float("inf")
+
+                fold_scores[orig_idx].append(score)
+                fold_results[orig_idx].append(result)
+                n_evaluations += 1
+
+            # Successive halving (skip after the last fold)
+            if fold_idx < n_folds - 1 and len(active_indices) > min_active:
+                ranked = sorted(
+                    active_indices,
+                    key=lambda i: sum(fold_scores[i]) / len(fold_scores[i]),
+                    reverse=True,
+                )
+                keep_n = max(min_active, len(active_indices) // halving_factor)
+                kept = ranked[:keep_n]
+                pruned = ranked[keep_n:]
+                for i in pruned:
+                    pruned_at_fold[i] = fold_idx
+                log.info(
+                    "    pruned %d params, kept %d (cutoff mean_score=%.3f)",
+                    len(pruned), len(kept),
+                    sum(fold_scores[kept[-1]]) / len(fold_scores[kept[-1]])
+                    if kept else float("nan"),
+                )
+                active_indices = kept
+
+        # Build BatchResult with every param represented (pruned ones included)
+        final_results: List[BacktestResult] = []
+        final_scores: List[float] = []
+        for i, params in enumerate(params_list):
+            scores_i = fold_scores[i]
+            results_i = fold_results[i]
+            if not scores_i:
+                final_results.append(create_dummy_result(params, "Pruned before any rung"))
+                final_scores.append(-float("inf"))
+                continue
+
+            if aggregate == "mean":
+                agg = sum(scores_i) / len(scores_i)
+            elif aggregate == "median":
+                sorted_s = sorted(scores_i)
+                agg = sorted_s[len(sorted_s) // 2]
+            elif aggregate == "min":
+                agg = min(scores_i)
+            else:
+                agg = sum(scores_i) / len(scores_i)
+
+            repr_result = results_i[-1]
+            repr_result.metadata["cv_scores"] = scores_i
+            repr_result.metadata["cv_aggregate"] = aggregate
+            repr_result.metadata["cv_score_mean"] = agg
+            repr_result.metadata["cv_n_folds"] = len(scores_i)
+            repr_result.metadata["cv_pruned_at_fold"] = pruned_at_fold[i]
+            repr_result.metadata["cv_score_min"] = min(scores_i)
+            repr_result.metadata["cv_score_max"] = max(scores_i)
+            repr_result.metadata["cv_score_std"] = (
+                (sum((s - agg) ** 2 for s in scores_i) / len(scores_i)) ** 0.5
+                if len(scores_i) > 1 else 0.0
+            )
+            repr_result.metadata["cv_fold_details"] = [
+                {
+                    "fold_idx": fi, "score": s,
+                    "sharpe": r.sharpe_ratio,
+                    "total_return_pct": r.total_return_pct,
+                    "max_drawdown": r.max_drawdown,
+                    "total_trades": r.total_trades,
+                    "total_costs": r.total_costs,
+                }
+                for fi, (s, r) in enumerate(zip(scores_i, results_i))
+            ]
+            final_results.append(repr_result)
+            final_scores.append(agg)
+
+        rankings = sorted(
+            range(len(final_scores)),
+            key=lambda i: final_scores[i],
+            reverse=True,
+        )
+        elapsed = time.time() - start_time
+        full_grid_evals = total * n_folds
+        log.info(
+            "Hyperband CV complete in %.1fs: %d evaluations (vs %d full-grid, saved %.1f%%)",
+            elapsed, n_evaluations, full_grid_evals,
+            100.0 * (1.0 - n_evaluations / max(1, full_grid_evals)),
+        )
+
+        if total > 10:
+            best_sharpe = max(
+                (r.sharpe_ratio for r in final_results if r.sharpe_ratio > -999),
+                default=0,
+            )
+            log.warning(selection_bias_warning(total, best_sharpe))
+
+        return BatchResult(
+            results=final_results,
+            scores=final_scores,
+            params_list=params_list,
+            rankings=rankings,
+            total_time_seconds=elapsed,
+            trial_count=total,
+            failed_count=0,
+            selection_bias_report=None,
+            cv_fold_details=[
+                r.metadata.get("cv_fold_details", []) for r in final_results
+            ],
+            cv_method=f"{split_mode}+hyperband",
+        )
+
     def run_cv_from_config(
         self,
         param_space: ParameterGrid | SearchSpace | List[Dict[str, Any]],

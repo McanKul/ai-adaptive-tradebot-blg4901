@@ -353,6 +353,17 @@ def _add_sweep_parser(subparsers):
     p.add_argument("--cv-aggregate", default="mean", choices=["mean", "median", "min"])
     p.add_argument("--cv-expanding", action="store_true")
 
+    # Hyperband (successive halving) — drop bottom 1/halving_factor of params
+    # after each fold so bad combos don't keep burning compute through every
+    # rung.  Incompatible with cv_method='cpcv'.
+    p.add_argument("--cv-hyperband", action="store_true",
+                   help="Enable Hyperband-style successive halving across CV folds")
+    p.add_argument("--cv-halving-factor", type=int, default=2,
+                   help="Keep top 1/halving_factor of params after each rung "
+                        "(default 2 = keep top half)")
+    p.add_argument("--cv-min-active", type=int, default=2,
+                   help="Floor on active params at each rung (default 2)")
+
     # Selector — minimum-quality filters
     p.add_argument("--min-trades", type=int, default=None,
                    help="Drop combos with fewer than N trades")
@@ -397,6 +408,9 @@ def _cmd_sweep(args):
         cv_n_test_splits=args.cv_n_test_splits,
         cv_aggregate=args.cv_aggregate,
         cv_expanding=args.cv_expanding,
+        cv_hyperband=args.cv_hyperband,
+        cv_halving_factor=args.cv_halving_factor,
+        cv_min_active=args.cv_min_active,
         min_trades=args.min_trades,
         min_sharpe=args.min_sharpe,
         max_drawdown=args.max_dd,
