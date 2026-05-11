@@ -213,4 +213,35 @@ class ConfigValidator:
                 "turn it on"
             )
 
+        # 9. risk.max_leverage must dominate every effective per-symbol
+        # leverage.  symbol_routes can quietly bump leverage above the
+        # account-level tavan; the only way to catch that today is to
+        # walk every symbol explicitly.
+        risk_max_lev = float(getattr(cfg.risk, "max_leverage", 0.0) or 0.0)
+        if risk_max_lev > 0.0 and hasattr(cfg, "leverage_for"):
+            for sym in cfg.symbols or []:
+                try:
+                    eff_lev = float(cfg.leverage_for(sym))
+                except Exception:
+                    continue
+                if eff_lev > risk_max_lev:
+                    errors.append(
+                        f"[real-money] {sym}: effective leverage "
+                        f"{eff_lev:g}x exceeds risk.max_leverage "
+                        f"{risk_max_lev:g}x (check symbol_routes overrides)"
+                    )
+
+        # 10. Spread filter must be armed.  PositionManager treats
+        # ``max_entry_spread_bps=0`` as "filter disabled", and when the
+        # filter is disabled a book-streamer outage cannot default-deny
+        # new entries.  Real money requires the filter on.
+        exec_cfg = getattr(cfg, "execution", None)
+        max_spread = float(getattr(exec_cfg, "max_entry_spread_bps", 0.0) or 0.0)
+        if max_spread <= 0.0:
+            errors.append(
+                "[real-money] execution.max_entry_spread_bps must be > 0 "
+                "— a disabled spread filter cannot default-deny entries "
+                "when the bookTicker stream is down"
+            )
+
         return errors

@@ -38,6 +38,7 @@ them so the user can fix one thing at a time.
 """
 from __future__ import annotations
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -45,6 +46,19 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+
+def compute_config_sha256(config_path: str) -> str:
+    """SHA-256 hex digest of the raw config file bytes.
+
+    The stamp embeds this so ``app.py live`` can detect content edits
+    that slip past the basename check (same file name, different YAML).
+    """
+    h = hashlib.sha256()
+    with open(config_path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def write_promotion_stamp(
@@ -71,6 +85,7 @@ def write_promotion_stamp(
     stamp = {
         "run_id": run_id,
         "config": config,
+        "config_sha256": compute_config_sha256(config),
         "strategy": strategy,
         "symbol": symbol,
         "timeframe": timeframe,
@@ -99,12 +114,24 @@ def _run(cmd: List[str], step: str) -> int:
 def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", required=True,
-                   help="Live config YAML (e.g. config/profiles/canary.yaml)")
-    p.add_argument("--strategy", required=True)
-    p.add_argument("--symbol", required=True)
-    p.add_argument("--timeframe", default="15m")
+                   help="Live config YAML (e.g. config/profiles/canary.yaml). "
+                        "Strategy / symbol / timeframe / strategy_params are "
+                        "derived from this file by default.")
+    # All four below are optional; defaults come from the live config so
+    # the gate cannot pass with a backtest that disagrees with what live
+    # will actually run.  Explicit values must match the config or we abort.
+    p.add_argument("--strategy", default=None,
+                   help="Override config's strategy.class. Must match "
+                        "config; mismatch aborts.")
+    p.add_argument("--symbol", default=None,
+                   help="Override config's single symbol. Must match "
+                        "config; mismatch aborts.")
+    p.add_argument("--timeframe", default=None,
+                   help="Override config's timeframe. Must match config; "
+                        "mismatch aborts.")
     p.add_argument("--strategy-params", default=None,
-                   help="JSON string passed through to backtest")
+                   help="JSON string passed through to backtest. When "
+                        "omitted, derived from config's strategy.params.")
     p.add_argument("--realism-config", default=None)
     p.add_argument("--data-dir", default="./data/ticks")
 
@@ -124,16 +151,135 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--require-min-matched", type=int, default=10)
     p.add_argument("--min-profit-factor", type=float, default=1.10)
     p.add_argument("--max-drawdown-pct", type=float, default=3.0)
+    p.add_argument("--min-live-trades", type=int, default=10,
+                   help="Minimum number of closed trade rows the live "
+                        "dry-run CSV must contain before the divergence "
+                        "gate is even attempted. Default 10.")
 
     p.add_argument("--out-dir", default="logs",
                    help="Where to drop intermediate JSON / CSV artefacts")
     return p.parse_args(argv)
 
 
+def _resolve_backtest_inputs(args: argparse.Namespace) -> Optional[int]:
+    """Read the live config and populate args.strategy / .symbol /
+    .timeframe / .strategy_params so the backtest covers what live runs.
+
+    Returns an exit code on failure (e.g. multi-symbol, CLI mismatch),
+    or ``None`` on success.  Mutates ``args`` in place.
+    """
+    # Local import keeps the tool importable even when the project's
+    # heavier deps aren't installed (e.g. dependency-light docs builds).
+    try:
+        from live.live_config import LiveConfig
+    except Exception as e:  # pragma: no cover — defensive
+        print(f"GATE FAIL: cannot import LiveConfig to read {args.config}: {e}")
+        return 1
+
+    try:
+        if args.config.endswith(".json"):
+            cfg = LiveConfig.from_json(args.config)
+        else:
+            cfg = LiveConfig.from_yaml(args.config)
+    except Exception as e:
+        print(f"GATE FAIL: cannot parse live config {args.config}: {e}")
+        return 1
+
+    symbols = list(cfg.symbols or [])
+    if len(symbols) == 0:
+        print("GATE FAIL: live config has no symbols.")
+        return 1
+    if len(symbols) > 1:
+        print(
+            f"GATE FAIL [multi-symbol]: live config lists {len(symbols)} "
+            f"symbols ({', '.join(symbols)}). The promotion gate currently "
+            f"runs backtest+divergence against a single symbol. Trim the "
+            f"live config to one canary symbol, or re-promote per-symbol."
+        )
+        return 5
+
+    cfg_symbol = symbols[0]
+    cfg_strategy = cfg.strategy_class
+    cfg_timeframe = cfg.timeframe
+    cfg_params_obj = cfg.strategy_params or {}
+
+    # Defense-in-depth: any CLI override must agree with the config.
+    mismatches: List[str] = []
+    if args.strategy is not None and args.strategy != cfg_strategy:
+        mismatches.append(
+            f"--strategy={args.strategy!r} vs config "
+            f"strategy.class={cfg_strategy!r}"
+        )
+    if args.symbol is not None and args.symbol != cfg_symbol:
+        mismatches.append(
+            f"--symbol={args.symbol!r} vs config symbols=[{cfg_symbol!r}]"
+        )
+    if args.timeframe is not None and args.timeframe != cfg_timeframe:
+        mismatches.append(
+            f"--timeframe={args.timeframe!r} vs config "
+            f"timeframe={cfg_timeframe!r}"
+        )
+    if args.strategy_params is not None:
+        try:
+            cli_params = json.loads(args.strategy_params)
+        except json.JSONDecodeError as e:
+            print(f"GATE FAIL: --strategy-params is not valid JSON: {e}")
+            return 1
+        if cli_params != cfg_params_obj:
+            mismatches.append(
+                "--strategy-params disagrees with config strategy.params"
+            )
+    if mismatches:
+        print("GATE FAIL [config mismatch]: gate inputs disagree with the "
+              "live config:")
+        for m in mismatches:
+            print(f"  - {m}")
+        print("  Remove the conflicting CLI flag(s) or align the config "
+              "before re-running.")
+        return 1
+
+    # Populate from config when CLI did not provide.
+    args.strategy = cfg_strategy
+    args.symbol = cfg_symbol
+    args.timeframe = cfg_timeframe
+    if args.strategy_params is None and cfg_params_obj:
+        args.strategy_params = json.dumps(cfg_params_obj)
+    return None
+
+
+def _count_live_trades(path: str) -> int:
+    """Return the number of non-header rows in the live-trades CSV.
+
+    Used by the min-trades guard so a dry-run that only wrote a CSV
+    header (zero closed trades) cannot trigger a green divergence gate.
+    """
+    import csv
+    if not os.path.exists(path):
+        return 0
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        try:
+            next(reader)  # header
+        except StopIteration:
+            return 0
+        return sum(1 for _ in reader)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = _parse_args(argv)
     os.makedirs(args.out_dir, exist_ok=True)
     py = sys.executable
+
+    # Step 0 — resolve strategy/symbol/timeframe/params from the live
+    # config so the backtest cannot diverge from what live will run.
+    # Also enforces the single-symbol guard.
+    rc = _resolve_backtest_inputs(args)
+    if rc is not None:
+        return rc
+    print(
+        f"  gate inputs (from {args.config}): strategy={args.strategy} "
+        f"symbol={args.symbol} timeframe={args.timeframe}"
+    )
 
     # Step 1 — validate config (real-money mode)
     rc = _run(
@@ -177,6 +323,22 @@ def main(argv: Optional[List[str]] = None) -> int:
               "tune parameters or extend tick data before promotion.")
         return 2
     print(f"\n  backtest exported {n_trades} trades → {bt_json}")
+
+    # Step 2.5 — live-trades CSV must contain at least --min-live-trades
+    # closed-trade rows. A CSV with only a header row would otherwise
+    # sail through the divergence harness (nothing to compare, no
+    # mismatches reported) and produce a false "GATE PASS".
+    n_live = _count_live_trades(args.live_trades)
+    if n_live < args.min_live_trades:
+        print(
+            f"\nGATE FAIL [step 2.5]: live-trades CSV {args.live_trades} "
+            f"contains {n_live} closed-trade rows (< required "
+            f"{args.min_live_trades}). Run the dry-run longer before "
+            f"promotion, or lower --min-live-trades if you know what "
+            f"you're doing."
+        )
+        return 3
+    print(f"  live-trades CSV: {n_live} closed rows (≥ {args.min_live_trades})")
 
     # Step 3 — divergence harness in strict mode
     div_cmd = [

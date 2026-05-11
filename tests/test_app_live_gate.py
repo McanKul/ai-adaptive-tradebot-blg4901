@@ -263,9 +263,16 @@ class TestCmdLiveGateEnforcement(unittest.TestCase):
             args = self._make_args(config=cfg, run_id="canary",
                                    force_live=False)
 
+            # _cmd_live now also runs the real-money validator; this
+            # test focuses on the stamp path, so stub the validator to
+            # report a clean config.  A dedicated test below covers the
+            # case where the validator surfaces errors.
             with mock.patch(
+                "core.config_validator.ConfigValidator"
+            ) as cv_cls, mock.patch(
                 "core.services.live_service.LiveService"
             ) as svc_cls:
+                cv_cls.return_value.validate.return_value = []
                 instance = svc_cls.return_value
 
                 async def _noop(*a, **kw):
@@ -275,6 +282,32 @@ class TestCmdLiveGateEnforcement(unittest.TestCase):
                 app_module._cmd_live(args)
 
             instance.run.assert_called_once()
+
+    def test_real_money_validator_failure_exits_with_2(self):
+        """ConfigValidator(real_money=True) errors must short-circuit
+        live launch even when a valid promotion-gate stamp exists."""
+        with tempfile.TemporaryDirectory() as tmp, _chdir(tmp):
+            os.makedirs("config", exist_ok=True)
+            cfg = "config/canary.yaml"
+            open(cfg, "w").close()
+            _write_stamp("logs", "canary", config="canary.yaml",
+                         strategy="RSIThreshold")
+            args = self._make_args(config=cfg, run_id="canary",
+                                   force_live=False)
+
+            with mock.patch(
+                "core.config_validator.ConfigValidator"
+            ) as cv_cls, mock.patch(
+                "core.services.live_service.LiveService"
+            ) as svc_cls:
+                cv_cls.return_value.validate.return_value = [
+                    "[real-money] leverage 25x exceeds hard cap 10x"
+                ]
+                with self.assertRaises(SystemExit) as ctx:
+                    app_module._cmd_live(args)
+                self.assertEqual(ctx.exception.code, 2)
+                # LiveService must not have been constructed/used.
+                svc_cls.assert_not_called()
 
 
 if __name__ == "__main__":

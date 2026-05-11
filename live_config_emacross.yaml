@@ -79,7 +79,7 @@ exit:
   take_profit_pct: 1.00               # Margin'in %100'u = 10x'de %10 fiyat hareketi (R:R = 1:2)
   stop_loss_pct: 0.50                 # Margin'in %50'si = 10x'de %5 fiyat hareketi (max $5 kayip/trade)
   trailing_stop_pct: null             # Strateji icinde var (ATR-based)
-  max_holding_bars: 96               # 96 bar x 5m = 8 saat MAX tutma suresi (safety net)
+  max_holding_bars: 96               # 96 bar x 15m = 24 saat MAX tutma suresi (safety net)
   use_exchange_orders: true           # Exchange'de STOP_MARKET + TAKE_PROFIT_MARKET olarak yerlesir
 
 # =====================================================================

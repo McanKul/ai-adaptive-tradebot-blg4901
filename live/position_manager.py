@@ -348,7 +348,18 @@ class PositionManager:
         # send orders into an opaque market).  Disabled by setting
         # ``max_entry_spread_bps`` to 0.
         max_spread = float(getattr(self.execution_cfg, "max_entry_spread_bps", 0.0) or 0.0)
-        if max_spread > 0 and self.book_streamer is not None:
+        if max_spread > 0:
+            if self.book_streamer is None:
+                # Earlier this branch silently bypassed the filter, which
+                # turned a book-streamer outage into "allow all" — the
+                # exact opposite of what max_entry_spread_bps was set
+                # for.  In real-money mode that's unacceptable; block.
+                log.warning(
+                    "%s [%s] entry blocked — book streamer unavailable; "
+                    "spread filter cannot evaluate",
+                    symbol, strategy_name,
+                )
+                return False
             spread_bps = self.book_streamer.get_spread_bps(symbol)
             if spread_bps is None:
                 log.warning("%s [%s] entry blocked — no bookTicker yet (spread filter on)",

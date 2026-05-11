@@ -164,9 +164,12 @@ class TestSpreadFilterEntry(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(ok)
 
-    async def test_no_streamer_means_disabled(self):
-        # Even with max_spread_bps>0, missing streamer disables the
-        # filter rather than blocking — backtest fixtures rely on this
+    async def test_no_streamer_with_filter_on_blocks(self):
+        # max_spread_bps>0 with no book streamer used to silently bypass
+        # the filter ("allow all"); real money cannot tolerate that.
+        # We now default-deny: missing streamer with the filter armed
+        # rejects the entry.  Tests that want to skip the filter must
+        # set ``max_entry_spread_bps=0`` (see test_disabled_when_max_is_zero).
         pm, broker = _make_pm(max_spread_bps=5.0, book_streamer=None)
         async def _filt(sym, qty):
             return qty, 0.01, None  # qty, tick, min_notional
@@ -174,7 +177,7 @@ class TestSpreadFilterEntry(unittest.IsolatedAsyncioTestCase):
         ok = await pm.open_position(
             "BTCUSDT", side=1, strategy_name="t", leverage=1, timeframe="1m",
         )
-        self.assertTrue(ok)
+        self.assertFalse(ok)
 
 
 if __name__ == "__main__":

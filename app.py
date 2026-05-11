@@ -300,9 +300,14 @@ def _check_promotion_stamp(
       4. ``passed_at_utc`` is within ``max_age_days`` from now.
       5. ``strategy`` matches ``expected_strategy`` when provided
          (i.e. the strategy_class loaded from the config).
+      6. ``config_sha256`` matches the hash of the live config bytes
+         (defends against content edits with the same file name).
+         Stamps written by an older release without this field emit a
+         warning instead of failing — a one-release transition window.
 
     Returns the resolved stamp path on success.
     """
+    import hashlib
     import json
     from datetime import datetime, timezone, timedelta
     from pathlib import Path
@@ -372,6 +377,36 @@ def _check_promotion_stamp(
             )
             sys.exit(2)
 
+    # 6) config content hash.  Basename match (step 3) catches renames;
+    # this catches in-place content edits that keep the same filename.
+    stamp_hash = stamp.get("config_sha256")
+    if stamp_hash is None:
+        print(
+            f"WARNING: Stamp at {stamp_path} has no config_sha256 (legacy "
+            f"stamp). Re-run tools/promote_to_live.py to get a hashed "
+            f"stamp; this fallback will be removed in a future release."
+        )
+    else:
+        h = hashlib.sha256()
+        try:
+            with open(config_path, "rb") as f:
+                for chunk in iter(lambda: f.read(65536), b""):
+                    h.update(chunk)
+        except OSError as e:
+            print(f"ERROR: cannot hash config {config_path}: {e}")
+            sys.exit(2)
+        live_hash = h.hexdigest()
+        if live_hash != stamp_hash:
+            print(
+                f"ERROR: Stamp at {stamp_path} was issued against config "
+                f"sha256={stamp_hash[:12]}…, but current "
+                f"'{config_path}' hashes to {live_hash[:12]}….\n"
+                f"  The config has been edited since the gate passed. "
+                f"Re-run tools/promote_to_live.py or pass --force-live "
+                f"to bypass intentionally."
+            )
+            sys.exit(2)
+
     return stamp_path
 
 
@@ -384,6 +419,24 @@ def _cmd_live(args):
         print("WARNING: --force-live set — promotion gate bypassed. "
               "Real money at risk.")
     else:
+        # Run real-money strict validation up front. The validate
+        # subcommand exposes the same checks, but live trading must not
+        # depend on the operator remembering to run it first.
+        from core.config_validator import ConfigValidator
+        rm_errors = ConfigValidator().validate(args.config, real_money=True)
+        if rm_errors:
+            print(
+                f"\nREAL-MONEY config validation FAILED "
+                f"({len(rm_errors)} error(s)):\n"
+            )
+            for i, e in enumerate(rm_errors, 1):
+                print(f"  {i}. {e}")
+            print(
+                "\nFix the above before launching live, or pass --force-live "
+                "to bypass intentionally."
+            )
+            sys.exit(2)
+
         # Pre-parse the config so the stamp's strategy field can be
         # checked against what live is actually about to run.  Cheap —
         # YAML parse is sub-millisecond — and prevents the "stamped
