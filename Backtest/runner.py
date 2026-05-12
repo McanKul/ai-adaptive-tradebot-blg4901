@@ -15,7 +15,7 @@ from typing import Dict, List, Any, Optional, Type, Callable
 import logging
 import copy
 
-from Interfaces.strategy_adapter import IBacktestStrategy
+from Interfaces.strategy_adapter import IBacktestStrategy, SizingConfig
 from Interfaces.metrics_interface import BacktestResult
 
 from Backtest.engine import BacktestEngine, EngineConfig
@@ -99,6 +99,12 @@ class BacktestConfig:
 
     # NEW: Realism configuration (Part A refactor)
     realism: RealismConfig = field(default_factory=RealismConfig)
+
+    # Sizing config — without this the engine keeps the strategy's placeholder
+    # qty (typically 1.0), which silently rejects every order on high-priced
+    # symbols where 1.0 × price exceeds max_position_notional.  Sweep paths
+    # MUST populate this.
+    sizing: Optional["SizingConfig"] = None
 
     def to_engine_config(self) -> EngineConfig:
         """Convert to EngineConfig for BacktestEngine."""
@@ -212,8 +218,11 @@ class BacktestRunner:
             "timeframe": self.config.data.timeframe,
         }
         
-        # Run backtest
-        result = engine.run(strategy)
+        # Run backtest — pass sizing if configured.  Without this, the
+        # engine keeps the strategy's placeholder qty=1.0 and on high-price
+        # symbols (BTC) every order trips max_position_notional and gets
+        # silently rejected, producing 0-trade CV folds.
+        result = engine.run(strategy, sizing_config=self.config.sizing)
         
         # total_return_pct is already a percentage value; using :.2f%
         # rather than :.2% (which would re-multiply by 100).

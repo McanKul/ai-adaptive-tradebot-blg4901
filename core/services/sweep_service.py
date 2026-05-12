@@ -31,7 +31,7 @@ from Backtest.scoring.scorer import Scorer
 from Backtest.scoring.search_space import ParameterGrid, SearchSpace
 from Backtest.scoring.selector import Selector, SelectionCriteria
 from Interfaces.metrics_interface import BacktestResult
-from Interfaces.strategy_adapter import IBacktestStrategy
+from Interfaces.strategy_adapter import IBacktestStrategy, SizingConfig, SizingMode
 from core.factories.strategy_factory import StrategyFactory
 
 log = logging.getLogger(__name__)
@@ -161,6 +161,16 @@ class SweepService:
             RealismConfig.from_yaml(realism_config_path)
             if realism_config_path else RealismConfig()
         )
+        # Sizing must flow through so CV folds compute actual qty.  Without
+        # this, the engine keeps the strategy's qty=1.0 placeholder and
+        # max_position_notional silently rejects every order on high-price
+        # symbols (BTC at $70k × 1.0 = $70k > 50k limit → 0 trades).
+        sizing = SizingConfig(
+            mode=SizingMode.MARGIN_USD,
+            margin_usd=float(margin_usd),
+            leverage=float(leverage),
+            leverage_mode="margin",
+        )
         bt_cfg = BacktestConfig(
             data=data_cfg,
             initial_capital=capital,
@@ -182,6 +192,7 @@ class SweepService:
             tp_pct=tp_pct,
             sl_pct=sl_pct,
             realism=realism,
+            sizing=sizing,
         )
 
         # 3) Strategy factory closure (BatchBacktest expects it)

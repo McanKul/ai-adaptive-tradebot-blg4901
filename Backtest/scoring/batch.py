@@ -863,6 +863,10 @@ class BatchBacktest:
             max_holding_bars=getattr(self.config, "max_holding_bars", None),
             # Realism config passthrough (Part A/C)
             realism=self.config.realism,
+            # Sizing passthrough — without this CV folds silently keep the
+            # strategy's qty=1.0 placeholder; on BTC that means notional
+            # ≈ $70k per trade and every order trips max_position_notional.
+            sizing=getattr(self.config, "sizing", None),
         )
 
     # ------------------------------------------------------------------
