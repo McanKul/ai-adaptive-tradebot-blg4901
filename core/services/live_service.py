@@ -137,7 +137,7 @@ class LiveService:
             global_risk=global_risk,
             news_source=news.news_source,
             sentiment_analyzer=news.sentiment_analyzer,
-            signal_combiner=news.signal_combiner,
+            margin_adjuster=news.margin_adjuster,
             market_client=market_client,
         )
 

@@ -3,15 +3,16 @@ live/live_engine.py
 ===================
 Live trading engine that coordinates:
 - Strategy signals (via IStrategy)
-- News sentiment analysis (via NewsEngine + SignalCombiner)
+- News sentiment analysis (via NewsEngine + SentimentMarginAdjuster)
 - Position management (via LiveSupervisor — per-symbol PositionManager)
 - Account-level risk (via LiveGlobalRisk)
 
-Signal combination logic:
-- Both strategy + sentiment agree BUY  → LONG
-- Both strategy + sentiment agree SELL → SHORT
-- Mixed or neutral signals             → NO ACTION
-- No news engine configured            → strategy signal only
+Sentiment-driven margin adjustment:
+- Strategy decides entries independently (LONG / SHORT)
+- News sentiment adjusts position margin when it strongly confirms
+  the direction: strongly bullish + LONG → bigger position,
+  strongly bearish + SHORT → bigger position.
+- No news engine configured → default margin
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ from utils.bar_store import BarStore
 from Interfaces.IBroker import IBroker
 from Interfaces.INewsSource import INewsSource
 from Interfaces.ISentimentAnalyzer import ISentimentAnalyzer
-from Interfaces.ISignalCombiner import ISignalCombiner
+from Interfaces.ISignalCombiner import IMarginAdjuster
 from Interfaces.market_data import Bar
 from Interfaces.orders import OrderSide
 from Interfaces.strategy_adapter import StrategyContext
@@ -59,7 +60,7 @@ class LiveEngine:
         global_risk: LiveGlobalRisk = None,
         news_source: Optional[INewsSource] = None,
         sentiment_analyzer: Optional[ISentimentAnalyzer] = None,
-        signal_combiner: Optional[ISignalCombiner] = None,
+        margin_adjuster: Optional[IMarginAdjuster] = None,
         market_client=None,  # Real client for WebSocket/preload in dry-run mode
         strategy=None,  # Pre-built IStrategy (e.g. CompositeStrategy); takes precedence
     ):
@@ -132,9 +133,9 @@ class LiveEngine:
         # ── Notifications ────────────────────────────────────────────
         self.notifier = TelegramNotifier()
 
-        # ── News Sentiment ─────────────────────────────────────────────
+        # ── News Sentiment (margin adjustment) ──────────────────────────
         self.news_engine = None
-        self.signal_combiner = signal_combiner
+        self.margin_adjuster = margin_adjuster
 
         if news_source and sentiment_analyzer and NewsEngine:
             self.news_engine = NewsEngine(
@@ -145,10 +146,10 @@ class LiveEngine:
             )
             log.info("News sentiment enabled (refresh=%ds)", cfg.news.refresh_interval)
 
-        if self.news_engine and not self.signal_combiner:
+        if self.news_engine and not self.margin_adjuster:
             log.warning(
-                "News engine enabled but no signal combiner — "
-                "sentiment will be logged but NOT used for trading"
+                "News engine enabled but no margin adjuster — "
+                "sentiment will be logged but NOT used for margin adjustment"
             )
 
     # ── Realised cost accounting (Phase B4 follow-up) ─────────────────
@@ -282,41 +283,48 @@ class LiveEngine:
                 log.warning("Balance refresh failed, using cached: %s", e)
         return self._last_equity
 
-    # ── Signal Combination ────────────────────────────────────────────
+    # ── Sentiment-Driven Margin Adjustment ─────────────────────────────
 
-    async def _get_combined_signal(
-        self, symbol: str, strategy_signal: Optional[str]
-    ) -> Optional[int]:
+    async def _get_sentiment_margin_multiplier(
+        self, symbol: str, direction: int,
+    ) -> float:
         """
-        Combine strategy signal with news sentiment.
+        Compute a margin multiplier from news sentiment.
+
+        Args:
+            symbol: Trading symbol (e.g. "BTCUSDT")
+            direction: +1 for LONG, -1 for SHORT
 
         Returns:
-            +1 for long, -1 for short, None for no action.
+            Float >= 1.0.  1.0 = default margin; >1.0 = boosted margin.
         """
-        strat_int = int(strategy_signal) if strategy_signal is not None else None
-
-        # No news engine → pass through raw strategy signal
+        # No news engine → default margin
         if not self.news_engine:
-            return strat_int
+            return 1.0
 
         # Fetch sentiment score (cached or fresh)
         sentiment_score = await self.news_engine.get_sentiment(symbol)
         log.info(
-            "[%s] strategy_signal=%s, sentiment=%.2f",
-            symbol, strategy_signal, sentiment_score,
+            "[%s] direction=%+d, sentiment=%.2f",
+            symbol, direction, sentiment_score,
         )
 
-        # No combiner → log only, pass through raw strategy signal
-        if not self.signal_combiner:
-            return strat_int
+        # No adjuster → log only, default margin
+        if not self.margin_adjuster:
+            return 1.0
 
-        # Combine strategy + sentiment
-        combined = self.signal_combiner.combine(strat_int, sentiment_score)
+        # Compute margin multiplier
+        multiplier = self.margin_adjuster.compute_margin_multiplier(
+            direction, sentiment_score,
+        )
 
-        if combined != strat_int:
-            log.info("[%s] Signal modified by sentiment: %s → %s", symbol, strat_int, combined)
+        if multiplier > 1.0:
+            log.info(
+                "[%s] Sentiment margin boost: multiplier=%.2f",
+                symbol, multiplier,
+            )
 
-        return combined
+        return multiplier
 
     # ── Order-level dispatch helpers ───────────────────────────────────
     # These fan out a `StrategyDecision.orders` list across the broker

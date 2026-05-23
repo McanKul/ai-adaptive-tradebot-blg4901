@@ -14,17 +14,17 @@ from typing import Callable, Optional
 
 from Interfaces.INewsSource import INewsSource
 from Interfaces.ISentimentAnalyzer import ISentimentAnalyzer
-from Interfaces.ISignalCombiner import ISignalCombiner
+from Interfaces.ISignalCombiner import IMarginAdjuster
 
 log = logging.getLogger(__name__)
 
 
 @dataclass
 class NewsComponents:
-    """Container for the three news-sentiment objects."""
+    """Container for the news-sentiment objects."""
     news_source: Optional[INewsSource] = None
     sentiment_analyzer: Optional[ISentimentAnalyzer] = None
-    signal_combiner: Optional[ISignalCombiner] = None
+    margin_adjuster: Optional[IMarginAdjuster] = None
 
 
 class NewsFactory:
@@ -85,21 +85,24 @@ class NewsFactory:
 
         news_source, sentiment_analyzer = creator(api_key)
 
-        from news.signal_combiner import BinarySignalCombiner
-        signal_combiner = BinarySignalCombiner(
-            buy_threshold=news_cfg.buy_threshold,
-            sell_threshold=news_cfg.sell_threshold,
+        from news.signal_combiner import SentimentMarginAdjuster
+        margin_adjuster = SentimentMarginAdjuster(
+            high_sentiment_threshold=news_cfg.high_sentiment_threshold,
+            low_sentiment_threshold=news_cfg.low_sentiment_threshold,
+            margin_boost_max=news_cfg.margin_boost_max,
         )
 
         log.info(
             "News sentiment enabled: provider=%s, refresh=%ds, "
-            "thresholds=(buy=%.2f, sell=%.2f)",
+            "thresholds=(high=%.2f, low=%.2f), boost_max=%.0f%%",
             provider, news_cfg.refresh_interval,
-            news_cfg.buy_threshold, news_cfg.sell_threshold,
+            news_cfg.high_sentiment_threshold,
+            news_cfg.low_sentiment_threshold,
+            news_cfg.margin_boost_max * 100,
         )
 
         return NewsComponents(
             news_source=news_source,
             sentiment_analyzer=sentiment_analyzer,
-            signal_combiner=signal_combiner,
+            margin_adjuster=margin_adjuster,
         )

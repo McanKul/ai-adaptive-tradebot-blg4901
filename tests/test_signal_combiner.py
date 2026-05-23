@@ -1,102 +1,146 @@
 import pytest
-from news.signal_combiner import BinarySignalCombiner
+from news.signal_combiner import SentimentMarginAdjuster
 
 
-class TestBinarySignalCombiner:
-    """Test cases for the BinarySignalCombiner class."""
-    
+class TestSentimentMarginAdjuster:
+    """Test cases for the SentimentMarginAdjuster class."""
+
     def setup_method(self):
         """Set up test fixtures."""
-        self.combiner = BinarySignalCombiner(buy_threshold=0.6, sell_threshold=0.4)
-    
-    # --- Both signals agree ---
-    
-    def test_both_buy_signals_returns_long(self):
-        """Strategy BUY + Bullish sentiment → LONG."""
-        result = self.combiner.combine(strategy_signal=+1, sentiment_score=0.8)
-        assert result == +1
-    
-    def test_both_sell_signals_returns_short(self):
-        """Strategy SELL + Bearish sentiment → SHORT."""
-        result = self.combiner.combine(strategy_signal=-1, sentiment_score=0.2)
-        assert result == -1
-    
-    # --- Mixed signals ---
-    
-    def test_buy_strategy_bearish_sentiment_returns_none(self):
-        """Strategy BUY + Bearish sentiment → No action."""
-        result = self.combiner.combine(strategy_signal=+1, sentiment_score=0.2)
-        assert result is None
-    
-    def test_sell_strategy_bullish_sentiment_returns_none(self):
-        """Strategy SELL + Bullish sentiment → No action."""
-        result = self.combiner.combine(strategy_signal=-1, sentiment_score=0.8)
-        assert result is None
-    
-    # --- Neutral sentiment ---
-    
-    def test_buy_strategy_neutral_sentiment_returns_none(self):
-        """Strategy BUY + Neutral sentiment → No action."""
-        result = self.combiner.combine(strategy_signal=+1, sentiment_score=0.5)
-        assert result is None
-    
-    def test_sell_strategy_neutral_sentiment_returns_none(self):
-        """Strategy SELL + Neutral sentiment → No action."""
-        result = self.combiner.combine(strategy_signal=-1, sentiment_score=0.5)
-        assert result is None
-    
-    # --- No strategy signal ---
-    
-    def test_no_strategy_signal_returns_none(self):
-        """No strategy signal → No action regardless of sentiment."""
-        assert self.combiner.combine(strategy_signal=None, sentiment_score=0.9) is None
-        assert self.combiner.combine(strategy_signal=None, sentiment_score=0.1) is None
-        assert self.combiner.combine(strategy_signal=None, sentiment_score=0.5) is None
-    
-    # --- Threshold boundary tests ---
-    
-    def test_sentiment_at_buy_threshold_is_neutral(self):
-        """Sentiment exactly at buy threshold is neutral."""
-        result = self.combiner.combine(strategy_signal=+1, sentiment_score=0.6)
-        assert result is None  # 0.6 is not > 0.6
-    
-    def test_sentiment_above_buy_threshold_is_bullish(self):
-        """Sentiment above buy threshold is bullish."""
-        result = self.combiner.combine(strategy_signal=+1, sentiment_score=0.61)
-        assert result == +1
-    
-    def test_sentiment_at_sell_threshold_is_neutral(self):
-        """Sentiment exactly at sell threshold is neutral."""
-        result = self.combiner.combine(strategy_signal=-1, sentiment_score=0.4)
-        assert result is None  # 0.4 is not < 0.4
-    
-    def test_sentiment_below_sell_threshold_is_bearish(self):
-        """Sentiment below sell threshold is bearish."""
-        result = self.combiner.combine(strategy_signal=-1, sentiment_score=0.39)
-        assert result == -1
-    
-    # --- String signal handling ---
-    
-    def test_string_buy_signal_is_handled(self):
-        """String '+1' signal should be converted to int."""
-        result = self.combiner.combine(strategy_signal="+1", sentiment_score=0.8)
-        assert result == +1
-    
-    def test_string_sell_signal_is_handled(self):
-        """String '-1' signal should be converted to int."""
-        result = self.combiner.combine(strategy_signal="-1", sentiment_score=0.2)
-        assert result == -1
-    
-    # --- Custom threshold tests ---
-    
+        self.adjuster = SentimentMarginAdjuster(
+            high_sentiment_threshold=0.75,
+            low_sentiment_threshold=0.25,
+            margin_boost_max=0.5,
+        )
+
+    # --- LONG + bullish sentiment (boost) ---
+
+    def test_long_strongly_bullish_returns_boost(self):
+        """LONG + very high sentiment → margin multiplier > 1.0."""
+        result = self.adjuster.compute_margin_multiplier(direction=+1, sentiment_score=0.9)
+        assert result > 1.0
+        assert result <= 1.5  # max boost is 50%
+
+    def test_long_max_bullish_returns_max_boost(self):
+        """LONG + sentiment = 1.0 → maximum margin multiplier."""
+        result = self.adjuster.compute_margin_multiplier(direction=+1, sentiment_score=1.0)
+        assert result == pytest.approx(1.5, abs=0.01)
+
+    def test_long_at_threshold_returns_no_boost(self):
+        """LONG + sentiment exactly at threshold → no boost (1.0)."""
+        result = self.adjuster.compute_margin_multiplier(direction=+1, sentiment_score=0.75)
+        assert result == 1.0
+
+    def test_long_above_threshold_returns_boost(self):
+        """LONG + sentiment just above threshold → slight boost."""
+        result = self.adjuster.compute_margin_multiplier(direction=+1, sentiment_score=0.76)
+        assert result > 1.0
+        assert result < 1.1  # small boost for barely above threshold
+
+    # --- SHORT + bearish sentiment (boost) ---
+
+    def test_short_strongly_bearish_returns_boost(self):
+        """SHORT + very low sentiment → margin multiplier > 1.0."""
+        result = self.adjuster.compute_margin_multiplier(direction=-1, sentiment_score=0.1)
+        assert result > 1.0
+        assert result <= 1.5
+
+    def test_short_max_bearish_returns_max_boost(self):
+        """SHORT + sentiment = 0.0 → maximum margin multiplier."""
+        result = self.adjuster.compute_margin_multiplier(direction=-1, sentiment_score=0.0)
+        assert result == pytest.approx(1.5, abs=0.01)
+
+    def test_short_at_threshold_returns_no_boost(self):
+        """SHORT + sentiment exactly at threshold → no boost."""
+        result = self.adjuster.compute_margin_multiplier(direction=-1, sentiment_score=0.25)
+        assert result == 1.0
+
+    def test_short_below_threshold_returns_boost(self):
+        """SHORT + sentiment just below threshold → slight boost."""
+        result = self.adjuster.compute_margin_multiplier(direction=-1, sentiment_score=0.24)
+        assert result > 1.0
+        assert result < 1.1
+
+    # --- Neutral sentiment (no boost) ---
+
+    def test_long_neutral_sentiment_no_boost(self):
+        """LONG + neutral sentiment → no boost."""
+        result = self.adjuster.compute_margin_multiplier(direction=+1, sentiment_score=0.5)
+        assert result == 1.0
+
+    def test_short_neutral_sentiment_no_boost(self):
+        """SHORT + neutral sentiment → no boost."""
+        result = self.adjuster.compute_margin_multiplier(direction=-1, sentiment_score=0.5)
+        assert result == 1.0
+
+    # --- Contrary sentiment (no boost, no reduction) ---
+
+    def test_long_bearish_sentiment_no_change(self):
+        """LONG + bearish sentiment → no boost (not reduced either)."""
+        result = self.adjuster.compute_margin_multiplier(direction=+1, sentiment_score=0.1)
+        assert result == 1.0
+
+    def test_short_bullish_sentiment_no_change(self):
+        """SHORT + bullish sentiment → no boost (not reduced either)."""
+        result = self.adjuster.compute_margin_multiplier(direction=-1, sentiment_score=0.9)
+        assert result == 1.0
+
+    # --- Linear scaling verification ---
+
+    def test_linear_scaling_long(self):
+        """Verify linear scaling for LONG positions."""
+        # At threshold (0.75) → 1.0
+        # At 0.875 (midpoint between 0.75 and 1.0) → 1.25
+        # At 1.0 → 1.5
+        mid = self.adjuster.compute_margin_multiplier(direction=+1, sentiment_score=0.875)
+        assert mid == pytest.approx(1.25, abs=0.01)
+
+    def test_linear_scaling_short(self):
+        """Verify linear scaling for SHORT positions."""
+        # At threshold (0.25) → 1.0
+        # At 0.125 (midpoint between 0.0 and 0.25) → 1.25
+        # At 0.0 → 1.5
+        mid = self.adjuster.compute_margin_multiplier(direction=-1, sentiment_score=0.125)
+        assert mid == pytest.approx(1.25, abs=0.01)
+
+    # --- Custom thresholds ---
+
     def test_custom_thresholds(self):
-        """Test with custom thresholds."""
-        custom = BinarySignalCombiner(buy_threshold=0.7, sell_threshold=0.3)
-        
-        # 0.65 is bullish with default but neutral with custom
-        assert self.combiner.combine(strategy_signal=+1, sentiment_score=0.65) == +1
-        assert custom.combine(strategy_signal=+1, sentiment_score=0.65) is None
-        
-        # 0.35 is bearish with default but neutral with custom
-        assert self.combiner.combine(strategy_signal=-1, sentiment_score=0.35) == -1
-        assert custom.combine(strategy_signal=-1, sentiment_score=0.35) is None
+        """Test with custom thresholds and boost."""
+        custom = SentimentMarginAdjuster(
+            high_sentiment_threshold=0.80,
+            low_sentiment_threshold=0.20,
+            margin_boost_max=1.0,  # 100% boost
+        )
+
+        # Max bullish → 2.0x margin
+        result = custom.compute_margin_multiplier(direction=+1, sentiment_score=1.0)
+        assert result == pytest.approx(2.0, abs=0.01)
+
+        # Max bearish → 2.0x margin
+        result = custom.compute_margin_multiplier(direction=-1, sentiment_score=0.0)
+        assert result == pytest.approx(2.0, abs=0.01)
+
+        # Score that's bullish with default but not with custom
+        # 0.76 is above 0.75 (default) but below 0.80 (custom)
+        assert self.adjuster.compute_margin_multiplier(direction=+1, sentiment_score=0.76) > 1.0
+        assert custom.compute_margin_multiplier(direction=+1, sentiment_score=0.76) == 1.0
+
+    # --- Edge cases ---
+
+    def test_sentiment_clamped_above_one(self):
+        """Sentiment scores > 1.0 should be clamped."""
+        result = self.adjuster.compute_margin_multiplier(direction=+1, sentiment_score=1.5)
+        assert result == pytest.approx(1.5, abs=0.01)  # same as score=1.0
+
+    def test_sentiment_clamped_below_zero(self):
+        """Sentiment scores < 0.0 should be clamped."""
+        result = self.adjuster.compute_margin_multiplier(direction=-1, sentiment_score=-0.5)
+        assert result == pytest.approx(1.5, abs=0.01)  # same as score=0.0
+
+    def test_result_always_at_least_one(self):
+        """Multiplier should never be below 1.0."""
+        for direction in [+1, -1]:
+            for score in [0.0, 0.25, 0.5, 0.75, 1.0]:
+                result = self.adjuster.compute_margin_multiplier(direction, score)
+                assert result >= 1.0, f"direction={direction}, score={score} → {result}"

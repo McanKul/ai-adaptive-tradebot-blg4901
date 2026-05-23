@@ -20,8 +20,9 @@ def _make_news_cfg(enabled=False, provider="gemini", api_key=None):
     cfg.news.enabled = enabled
     cfg.news.sentiment_provider = provider
     cfg.news.api_key = api_key
-    cfg.news.buy_threshold = 0.6
-    cfg.news.sell_threshold = 0.4
+    cfg.news.high_sentiment_threshold = 0.75
+    cfg.news.low_sentiment_threshold = 0.25
+    cfg.news.margin_boost_max = 0.5
     cfg.news.refresh_interval = 300
     return cfg
 
@@ -39,7 +40,7 @@ class TestNewsFactory(unittest.TestCase):
         self.assertIsInstance(result, NewsComponents)
         self.assertIsNone(result.news_source)
         self.assertIsNone(result.sentiment_analyzer)
-        self.assertIsNone(result.signal_combiner)
+        self.assertIsNone(result.margin_adjuster)
 
     def test_unknown_provider_returns_empty(self):
         cfg = _make_news_cfg(enabled=True, provider="nonexistent")
@@ -58,7 +59,7 @@ class TestNewsFactory(unittest.TestCase):
         result = NewsFactory.create(cfg)
         self.assertIsNotNone(result.news_source)
         self.assertIsNotNone(result.sentiment_analyzer)
-        self.assertIsNotNone(result.signal_combiner)
+        self.assertIsNotNone(result.margin_adjuster)
 
     def test_explicit_api_key_used(self):
         cfg = _make_news_cfg(enabled=True, provider="gemini", api_key="explicit-key")
@@ -74,7 +75,7 @@ class TestNewsFactory(unittest.TestCase):
         cfg = _make_news_cfg(enabled=True, provider="custom_test", api_key="key")
         result = NewsFactory.create(cfg)
         self.assertIsNotNone(result.news_source)
-        self.assertIsNotNone(result.signal_combiner)
+        self.assertIsNotNone(result.margin_adjuster)
         # Cleanup
         del NewsFactory._providers["custom_test"]
 
