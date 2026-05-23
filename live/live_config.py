@@ -287,6 +287,15 @@ class ReconciliationConfig:
     qty_tolerance: float = 1e-6
     action: str = "halt"
 
+    def __post_init__(self) -> None:
+        # PyYAML's 1.1 schema parses unquoted scientific notation like
+        # ``1e-6`` as a STRING, not a float — that hits LiveEngine's
+        # reconciliation log (`tol=%g`) and raises a TypeError that
+        # corrupts the log line at runtime.  Coerce here so any YAML
+        # that came in as a string round-trips into a real number.
+        self.interval_seconds = float(self.interval_seconds)
+        self.qty_tolerance = float(self.qty_tolerance)
+
 
 # ---------------------------------------------------------------------------
 # News sentiment settings
@@ -499,7 +508,11 @@ class LiveConfig:
             rate_limit=_pick(RateLimitConfig, rl_d),
             reconciliation=_pick(ReconciliationConfig, recon_d),
             liquidation_guard=_pick(LiquidationGuardConfig, liq_d),
-            testnet=api_d.get("testnet", False),
+            # Accept both `api.testnet` (canonical) and a top-level
+            # `testnet` key.  Nested wins so an explicit api block keeps
+            # priority; the top-level key is a safety net for YAMLs that
+            # omit the api section entirely (some live profiles do).
+            testnet=bool(api_d.get("testnet", d.get("testnet", False))),
         )
 
     @staticmethod

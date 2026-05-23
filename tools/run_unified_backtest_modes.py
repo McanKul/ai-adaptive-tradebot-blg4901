@@ -110,6 +110,11 @@ from Backtest.realism_config import (
 from Backtest.scoring.scorer import Scorer, ScorerWeights
 from Interfaces.strategy_adapter import SizingConfig, SizingMode
 from Interfaces.metrics_interface import BacktestResult
+from core.bootstrap import register_defaults
+from core.factories.strategy_factory import StrategyFactory
+
+# Register all built-in strategies once so StrategyFactory.create() works.
+register_defaults()
 
 log = logging.getLogger(__name__)
 
@@ -404,89 +409,48 @@ MODES: Dict[str, Dict[str, Any]] = {
 @dataclass
 class StrategySpec:
     """Describes a strategy + sizing to instantiate."""
-    name: str
-    factory: str          # "rsi" or "donchian"
+    name: str            # Display name (e.g. "Donchian_live")
+    strategy_class: str  # StrategyFactory registry key (e.g. "DonchianATRVolTarget")
     params: Dict[str, Any]
     sizing: SizingConfig
 
 
 def _build_strategies(leverage: float, leverage_mode: str) -> List[StrategySpec]:
-    """Return the default experiment matrix of strategy configs."""
+    """
+    Live-ready strategy matrix. Parameters mirror live_config.yaml and
+    live_config_emacross.yaml, so backtests reflect what production runs.
+    """
     lev = leverage if leverage_mode == "margin" else 1.0
     sizing = SizingConfig(
         mode=SizingMode.MARGIN_USD,
-        margin_usd=100.0,
+        margin_usd=10.0,
         leverage=lev,
         leverage_mode=leverage_mode,
     )
     return [
         StrategySpec(
-            name="RSI_default",
-            factory="rsi",
+            name="Donchian_live",
+            strategy_class="DonchianATRVolTarget",
             params=dict(
-                rsi_period=14, rsi_overbought=70, rsi_oversold=30,
-                take_profit_pct=0.02, stop_loss_pct=0.01,
-                leverage=lev,
+                dc_period=15, atr_period=14, atr_mult=1.5,
+                risk_pct=0.003, filter_type="ema", ema_period=200,
+                allow_reversal=False,
             ),
             sizing=sizing,
         ),
         StrategySpec(
-            name="RSI_tight",
-            factory="rsi",
+            name="EMACross_live",
+            strategy_class="EMACrossMACDTrend",
             params=dict(
-                rsi_period=7, rsi_overbought=65, rsi_oversold=35,
-                take_profit_pct=0.01, stop_loss_pct=0.005,
-                leverage=lev,
-            ),
-            sizing=sizing,
-        ),
-        # Wide TP/SL → longer holds → funding/borrow actually trigger
-        StrategySpec(
-            name="RSI_longhold",
-            factory="rsi",
-            params=dict(
-                rsi_period=14, rsi_overbought=75, rsi_oversold=25,
-                take_profit_pct=0.10, stop_loss_pct=0.05,
-                leverage=lev,
-            ),
-            sizing=sizing,
-        ),
-        StrategySpec(
-            name="Donchian_short_ema",
-            factory="donchian",
-            params=dict(
-                dc_period=20, atr_period=14, atr_mult=3.0,
-                risk_pct=0.005, filter_type="ema", ema_period=50,
-            ),
-            sizing=sizing,
-        ),
-        StrategySpec(
-            name="Donchian_ema200",
-            factory="donchian",
-            params=dict(
-                dc_period=20, atr_period=14, atr_mult=3.0,
-                risk_pct=0.005, filter_type="ema", ema_period=200,
-            ),
-            sizing=sizing,
-        ),
-        # PART 4 — filter disabled, shorter dc_period for easier breakout
-        StrategySpec(
-            name="Donchian_no_filter",
-            factory="donchian",
-            params=dict(
-                dc_period=10, atr_period=14, atr_mult=2.0,
-                risk_pct=0.005, filter_type="none", ema_period=1,
-            ),
-            sizing=sizing,
-        ),
-        # PART 3 — extreme long-hold for funding/borrow demonstration
-        StrategySpec(
-            name="RSI_hold_forever",
-            factory="rsi",
-            params=dict(
-                rsi_period=14, rsi_overbought=80, rsi_oversold=20,
-                take_profit_pct=0.50, stop_loss_pct=0.25,
-                leverage=lev,
+                fast_ema_period=12, slow_ema_period=21,
+                macd_signal=9, atr_period=14, atr_mult=2.5,
+                adx_period=14, adx_threshold=25.0,
+                volume_filter=True, volume_period=20,
+                risk_pct=0.005, allow_reversal=False,
+                exit_on_macd_cross=True,
+                rsi_period=14, rsi_overbought=75.0, rsi_oversold=25.0,
+                use_rsi_filter=True, use_ema_slope=True,
+                min_histogram_pct=0.0,
             ),
             sizing=sizing,
         ),
@@ -494,19 +458,8 @@ def _build_strategies(leverage: float, leverage_mode: str) -> List[StrategySpec]
 
 
 def _create_strategy(spec: StrategySpec):
-    """Instantiate a strategy from its spec."""
-    if spec.factory == "rsi":
-        from Strategy.RSIThreshold import Strategy as RSIStrategy
-        return RSIStrategy(
-            position_size=1.0,
-            sizing_config=spec.sizing,
-            **spec.params,
-        )
-    elif spec.factory == "donchian":
-        from Strategy.DonchianATRVolTarget import Strategy as DonchianStrategy
-        return DonchianStrategy(**spec.params)
-    else:
-        raise ValueError(f"Unknown strategy factory: {spec.factory}")
+    """Resolve the registered class via StrategyFactory and instantiate it."""
+    return StrategyFactory.create(spec.strategy_class, **spec.params)
 
 
 # ---------------------------------------------------------------------------
@@ -657,7 +610,8 @@ def _run_one(
 def _donchian_debug(results: List[RunResult], base_config: dict) -> None:
     """Print diagnostic info for any Donchian runs that produced 0 trades."""
     zero_trade_runs = [
-        r for r in results if "Donchian" in r.strategy_name and r.total_trades == 0
+        r for r in results
+        if r.strategy_name.startswith("Donchian") and r.total_trades == 0
     ]
     if not zero_trade_runs:
         return

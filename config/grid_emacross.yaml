@@ -1,0 +1,33 @@
+# =====================================================================
+# config/grid_emacross.yaml
+# =====================================================================
+# Parameter grid for EMACrossMACDTrend sweep.
+#
+# Live-config baseline (from live_config_emacross.yaml):
+#   fast=12 slow=21 atr_mult=2.5 adx_threshold=25  exit_on_macd_cross=true
+#
+# Grid: 3 × 2 × 3 × 2 = 36 combinations; constraint cuts to ~30.
+# =====================================================================
+
+grid:
+  fast_ema_period: [8, 12, 16]
+  slow_ema_period: [21, 26]
+  atr_mult: [2.0, 2.5, 3.0]
+  adx_threshold: [20.0, 25.0]
+  macd_signal: [9]
+  atr_period: [14]
+  adx_period: [14]
+  volume_filter: [true]
+  volume_period: [20]
+  risk_pct: [0.005]
+  allow_reversal: [false]
+  exit_on_macd_cross: [true]
+  rsi_period: [14]
+  rsi_overbought: [75.0]
+  rsi_oversold: [25.0]
+  use_rsi_filter: [true]
+  use_ema_slope: [true]
+  min_histogram_pct: [0.0]
+
+constraints:
+  - {type: less_than, a: fast_ema_period, b: slow_ema_period}

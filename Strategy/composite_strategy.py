@@ -126,6 +126,12 @@ class CompositeStrategy(IStrategy):
 
         all_orders: List[Order] = []
         slot_meta: Dict[str, Dict[str, Any]] = {}
+        # Forward the most recent slot-published trail level so the engine's
+        # tick-exit handler can fire it intra-bar.  Multi-slot setups need
+        # per-slot stops eventually; for now we surface the last non-None
+        # value, which matches single-slot regime-gated composites.
+        forwarded_stop: Optional[float] = None
+        forwarded_stop_seen: bool = False
 
         for slot in self.slots:
             if not slot.enabled:
@@ -151,6 +157,17 @@ class CompositeStrategy(IStrategy):
                     position_size=1.0, strategy_id=slot.id,
                 )
                 child_orders = list(adapted.orders)
+
+                # Pick up the slot strategy's intra-bar trail level
+                if (
+                    adapted.decision is not None
+                    and isinstance(adapted.decision.metadata, dict)
+                    and "strategy_stop_price" in adapted.decision.metadata
+                ):
+                    forwarded_stop_seen = True
+                    val = adapted.decision.metadata["strategy_stop_price"]
+                    if val is not None:
+                        forwarded_stop = val
 
                 # Tag (defensive — adapter already does it but signal-only path needs it)
                 for o in child_orders:
@@ -198,9 +215,19 @@ class CompositeStrategy(IStrategy):
                 "position": self._slot_positions[slot.id],
             }
 
+        out_meta: Dict[str, Any] = {
+            "slots": slot_meta,
+            "regime_tags": regime_tags,
+        }
+        # Only forward if at least one slot reported a stop_price field this
+        # bar — otherwise leaving the key absent keeps the engine bridge
+        # quiet and preserves any previously-set stop.
+        if forwarded_stop_seen:
+            out_meta["strategy_stop_price"] = forwarded_stop
+
         return StrategyDecision(
             orders=all_orders,
-            metadata={"slots": slot_meta, "regime_tags": regime_tags},
+            metadata=out_meta,
             regime_tags=regime_tags,
         )
 

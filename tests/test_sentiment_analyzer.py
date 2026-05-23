@@ -19,6 +19,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from news.gemini_sentiment import GeminiSentimentAnalyzer
 
+pytestmark = pytest.mark.requires_network
+
 
 def _build_analyzer_with_mock(score_payload):
     """Return (analyzer, mock_generate) where the awaited call returns a

@@ -93,12 +93,13 @@ class TestDonchianStrategy:
         # Build bars where price first rises then drops sharply
         n = 30
         ohlcv = _generate_trending_bars(n, 100, trend=0.5, noise=0.1)
-        # Simulate "already long" by setting position
+        # Simulate "already long" by setting per-symbol state
         ctx = FakeContext(position=10.0, _ohlcv=ohlcv, equity=10000)
-        strat._entry_price = 100.0
-        strat._highest_since_entry = 115.0
-        strat._entry_bar_index = 1
-        strat._bar_count = n - 1
+        st = strat._get_state("BTCUSDT")
+        st["entry_price"] = 100.0
+        st["highest_since_entry"] = 115.0
+        st["entry_bar_index"] = 1
+        st["bar_count"] = n - 1
         # Drop bar: low goes well below trailing stop
         bar = Bar("BTCUSDT", "1m", 0, 115, 115, 50, 60, 1000)
         dec = strat.on_bar(bar, ctx)
@@ -109,11 +110,12 @@ class TestDonchianStrategy:
 
     def test_reset_clears_state(self):
         strat = DonchianStrategy()
-        strat._entry_bar_index = 100
-        strat._highest_since_entry = 999
+        st = strat._get_state("BTCUSDT")
+        st["entry_bar_index"] = 100
+        st["highest_since_entry"] = 999
+        assert "BTCUSDT" in strat._state
         strat.reset()
-        assert strat._entry_bar_index == 0
-        assert strat._highest_since_entry == -math.inf
+        assert strat._state == {}
 
     def test_atr_computation(self):
         h = np.array([11, 12, 13, 14, 15], dtype=float)
@@ -133,10 +135,11 @@ class TestDonchianStrategy:
                                   filter_type="none")
         ohlcv = _generate_trending_bars(20, 100, trend=0.1, noise=0.1)
         ctx = FakeContext(position=5.0, _ohlcv=ohlcv, equity=10000)
-        strat._entry_bar_index = 1
-        strat._bar_count = 10  # already held for 10 bars (> max 5)
-        strat._highest_since_entry = 200  # prevent trailing stop
-        strat._entry_price = 100.0
+        st = strat._get_state("BTCUSDT")
+        st["entry_bar_index"] = 1
+        st["bar_count"] = 10  # already held for 10 bars (> max 5)
+        st["highest_since_entry"] = 200  # prevent trailing stop
+        st["entry_price"] = 100.0
         # Bar that won't hit trailing stop (low = 199 > 200 - 100*atr)
         bar = Bar("BTCUSDT", "1m", 0, 100, 200, 199, 100, 1000)
         dec = strat.on_bar(bar, ctx)

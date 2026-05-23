@@ -134,8 +134,9 @@ IBacktestStrategy = IStrategy
 class SizingMode(Enum):
     """Position sizing mode."""
     FIXED_QTY = "fixed_qty"      # Use explicit quantity
-    NOTIONAL_USD = "notional_usd"  # qty = notional / price
+    NOTIONAL_USD = "notional_usd"  # qty = notional / price (leverage NOT applied)
     MARGIN_USD = "margin_usd"    # qty = (margin * leverage) / price
+    LEVERAGED_NOTIONAL = "leveraged_notional"  # qty = (notional * leverage) / price
 
 
 @dataclass
@@ -189,7 +190,18 @@ class SizingConfig:
             else:
                 notional = self.margin_usd * self.leverage
             return notional / price
-        
+
+        elif self.mode == SizingMode.LEVERAGED_NOTIONAL:
+            # User-friendly: specify the notional you want at 1x and let
+            # leverage scale it up.  exposure = notional × leverage.
+            # In spot mode (leverage=1) this matches NOTIONAL_USD.
+            notional = self.notional_usd or 100.0
+            if self.leverage_mode == "spot":
+                exposure = notional
+            else:
+                exposure = notional * self.leverage
+            return exposure / price
+
         return 1.0  # Fallback
     
     def get_target_notional(self) -> float:
@@ -200,6 +212,11 @@ class SizingConfig:
             if self.leverage_mode == "spot":
                 return self.margin_usd
             return self.margin_usd * self.leverage
+        elif self.mode == SizingMode.LEVERAGED_NOTIONAL:
+            base = self.notional_usd or 100.0
+            if self.leverage_mode == "spot":
+                return base
+            return base * self.leverage
         return 0.0  # Unknown for FIXED_QTY without price
 
 

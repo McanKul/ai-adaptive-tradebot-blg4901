@@ -20,6 +20,10 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Optional, List, Dict, Any
 
+import pytest
+
+pytestmark = pytest.mark.requires_binance
+
 # ── Mock binance before any project imports ──────────────────────────
 sys.modules["binance"] = MagicMock()
 sys.modules["binance.client"] = MagicMock()
@@ -130,7 +134,11 @@ def make_config(
         sizing=SizingConfig(leverage=10, margin_usd=5.0),
         exit=ExitConfig(max_holding_bars=max_holding_bars),
         risk=RiskConfig(max_concurrent_positions=max_concurrent),
-        execution=ExecutionConfig(preload_bars=10),
+        # max_entry_spread_bps=0 disables the spread filter, which now
+        # default-denies when no book streamer is wired in.  These
+        # tests don't exercise the filter and don't run the engine's
+        # startup that would attach one.
+        execution=ExecutionConfig(preload_bars=10, max_entry_spread_bps=0.0),
         global_risk=GlobalRiskConfig(
             max_correlated_positions=max_correlated,
             persist_path=tempfile.mktemp(suffix=".json"),
@@ -161,6 +169,10 @@ def make_broker(mark_prices: Optional[Dict[str, float]] = None) -> AsyncMock:
     broker.place_take_profit = AsyncMock(return_value=None)
     broker.cancel_order = AsyncMock()
     broker.close_position = AsyncMock()
+    # attach_rejection_counter is a sync method on the real broker; on
+    # an AsyncMock root it would auto-become an AsyncMock, returning an
+    # un-awaited coroutine and triggering a RuntimeWarning.
+    broker.attach_rejection_counter = MagicMock()
 
     # Track open positions so position_amt returns correct values
     broker._open_positions: Dict[str, float] = {}

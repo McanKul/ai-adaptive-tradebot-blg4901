@@ -1,6 +1,8 @@
 import pytest
 from news.crypto_news_source import MockNewsSource
 
+pytestmark = pytest.mark.requires_network
+
 
 class TestMockNewsSource:
     """Test cases for MockNewsSource."""
