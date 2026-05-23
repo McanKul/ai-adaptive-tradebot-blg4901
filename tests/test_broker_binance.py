@@ -1,6 +1,10 @@
 import sys, os, types
 from unittest.mock import AsyncMock
 
+import pytest
+
+pytestmark = pytest.mark.requires_binance
+
 # Mock binance modules
 class _Ex(Exception):
     def __init__(self, code):

@@ -1,5 +1,11 @@
 """
-Manual runner for the News Engine.
+tools/run_news_engine.py
+========================
+Manual runner for the News Engine — test DDG + Gemini sentiment on live news.
+
+Usage:
+    python tools/run_news_engine.py
+    python tools/run_news_engine.py BTCUSDT SOLUSDT
 """
 import asyncio
 import os

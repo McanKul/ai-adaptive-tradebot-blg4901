@@ -7,7 +7,7 @@
 #   Return: 91%  |  Sharpe: 0.833  |  Max DD: 15.6%  |  Trades: 7
 #
 # Usage:
-#     python live_runner.py --config example_live_config.yaml
+#     python app.py live --config example_live_config.yaml
 # =====================================================================
 
 # ---------- strategy ----------
@@ -22,7 +22,7 @@ strategy:
     ema_period: 200                # EMA period for trend filter
     adx_period: 14
     adx_threshold: 25.0
-    allow_reversal: true           # Allow reversing position on opposite signal
+    allow_reversal: false          # off until reversal-fill confirmation lands
 
 # ---------- symbols & timeframe ----------
 symbols:

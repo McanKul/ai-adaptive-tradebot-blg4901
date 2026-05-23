@@ -68,8 +68,15 @@ Note: Data is downloaded from https://data.binance.vision/ (free, no API key nee
     
     parser.add_argument(
         "--symbol", "-s",
-        required=True,
-        help="Trading symbol (e.g., DOGEUSDT, BTCUSDT)"
+        help="Trading symbol (e.g., DOGEUSDT, BTCUSDT). "
+             "Required unless --symbols is supplied."
+    )
+    parser.add_argument(
+        "--symbols",
+        help="Comma-separated list of symbols to backfill in one run "
+             "(e.g. 'BTCUSDT,ETHUSDT,SOLUSDT,AVAXUSDT,LINKUSDT'). "
+             "When set, --symbol is ignored and the script processes "
+             "each symbol sequentially with the same date range."
     )
     parser.add_argument(
         "--start",
@@ -103,9 +110,32 @@ Note: Data is downloaded from https://data.binance.vision/ (free, no API key nee
         action="store_true",
         help="Enable verbose logging"
     )
+    parser.add_argument(
+        "--market-type",
+        default="um",
+        choices=["spot", "um", "cm"],
+        help="Binance Vision dataset: 'spot' (legacy default), 'um' "
+             "(USD-M perpetuals — what the live engine trades, default), "
+             "or 'cm' (COIN-M).  The bot's backtest engine expects USD-M "
+             "tick data when running futures-flavoured live configs.",
+    )
+    parser.add_argument(
+        "--data-type",
+        default="aggTrades",
+        choices=["aggTrades", "trades"],
+        help="aggTrades (smaller, recommended) or trades",
+    )
     
     args = parser.parse_args()
-    
+
+    # Resolve symbol list — must have at least one source
+    if args.symbols:
+        symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    elif args.symbol:
+        symbols = [args.symbol.upper()]
+    else:
+        parser.error("Either --symbol or --symbols is required")
+
     # Setup logging
     log_level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
@@ -113,101 +143,125 @@ Note: Data is downloaded from https://data.binance.vision/ (free, no API key nee
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%H:%M:%S"
     )
-    
+
     # Validate dates
     if args.end < args.start:
         print(f"Error: End date ({args.end.date()}) must be >= start date ({args.start.date()})")
         sys.exit(1)
-    
+
     today = datetime.now()
     if args.end > today:
         print(f"Warning: End date is in the future. Using yesterday's date instead.")
         from datetime import timedelta
         args.end = today - timedelta(days=1)
-    
+
     # Calculate number of days
     num_days = (args.end - args.start).days + 1
-    
+
     print("=" * 60)
     print("BINANCE VISION TICK DATA FETCHER")
     print("=" * 60)
-    print(f"Symbol:     {args.symbol.upper()}")
+    print(f"Symbols:    {', '.join(symbols)}")
     print(f"Date Range: {args.start.date()} to {args.end.date()} ({num_days} days)")
     print(f"Output Dir: {args.output}")
     print("=" * 60)
     
     config = FetchConfig(
         output_dir=args.output,
-        overwrite=args.overwrite
+        overwrite=args.overwrite,
+        market_type=args.market_type,
+        data_type=args.data_type,
     )
     
+    overall_files = 0
+    overall_ticks = 0
+    overall_errors = 0
+    overall_failed_symbols = []
+
     with BinanceVisionFetcher(config) as fetcher:
         if args.verify:
-            # Verify mode
-            print("\nVerifying existing data...")
-            result = fetcher.verify_data(args.symbol, args.start, args.end)
-            
-            print(f"\nVerification Results:")
-            print(f"  Dates Expected: {result['dates_expected']}")
-            print(f"  Dates Present:  {result['dates_present']}")
-            print(f"  Coverage:       {result['coverage_pct']:.1f}%")
-            print(f"  Total Ticks:    {result['total_ticks']:,}")
-            
-            if result['dates_missing']:
-                print(f"\nMissing Dates ({len(result['dates_missing'])}):")
-                for d in result['dates_missing'][:10]:
-                    print(f"    {d}")
-                if len(result['dates_missing']) > 10:
-                    print(f"    ... and {len(result['dates_missing']) - 10} more")
-            
-            sys.exit(0 if result['coverage_pct'] == 100 else 1)
-        
-        # Download mode
-        print("\nDownloading tick data...")
-        print()
-        
-        dates_processed = [0]
-        
-        def on_progress(date, total, tick_count):
-            dates_processed[0] += 1
-            bar = progress_bar(dates_processed[0], total)
-            status = f"✓ {tick_count:,} ticks" if tick_count > 0 else "⊘ skipped/missing"
-            print(f"\r{bar} {date.date()} {status}".ljust(80), end="", flush=True)
-        
-        try:
-            files, ticks = fetcher.fetch_range(
-                args.symbol,
-                args.start,
-                args.end,
-                progress_callback=on_progress
-            )
-        except KeyboardInterrupt:
-            print("\n\nDownload interrupted by user.")
-            sys.exit(1)
-        
-        print("\n")
-        print("=" * 60)
+            # Verify mode — every symbol probed independently.
+            all_pct = []
+            for sym in symbols:
+                print(f"\nVerifying existing data for {sym}...")
+                result = fetcher.verify_data(sym, args.start, args.end)
+                print(f"  {sym}: expected={result['dates_expected']} "
+                      f"present={result['dates_present']} "
+                      f"coverage={result['coverage_pct']:.1f}% "
+                      f"ticks={result['total_ticks']:,}")
+                if result['dates_missing']:
+                    print(f"    missing ({len(result['dates_missing'])}):")
+                    for d in result['dates_missing'][:5]:
+                        print(f"      {d}")
+                    if len(result['dates_missing']) > 5:
+                        print(f"      ... and {len(result['dates_missing']) - 5} more")
+                all_pct.append(result['coverage_pct'])
+            sys.exit(0 if all(pct == 100 for pct in all_pct) else 1)
+
+        # Download mode — sequential per symbol.
+        print("\nDownloading tick data...\n")
+        for idx, sym in enumerate(symbols, 1):
+            print(f"\n[{idx}/{len(symbols)}] {sym}")
+            print("-" * 60)
+            dates_processed = [0]
+
+            def on_progress(date, total, tick_count):
+                dates_processed[0] += 1
+                bar = progress_bar(dates_processed[0], total)
+                status = (f"✓ {tick_count:,} ticks" if tick_count > 0
+                          else "⊘ skipped/missing")
+                print(f"\r{bar} {date.date()} {status}".ljust(80),
+                      end="", flush=True)
+
+            errors_before = len(fetcher.errors)
+            try:
+                files, ticks = fetcher.fetch_range(
+                    sym, args.start, args.end,
+                    progress_callback=on_progress,
+                )
+            except KeyboardInterrupt:
+                print("\n\nDownload interrupted by user.")
+                sys.exit(1)
+            except Exception as e:
+                print(f"\n  ERROR fetching {sym}: {e}")
+                overall_failed_symbols.append(sym)
+                continue
+            new_errors = len(fetcher.errors) - errors_before
+            print(f"\n  files={files} ticks={ticks:,} new_errors={new_errors}")
+            overall_files += files
+            overall_ticks += ticks
+            overall_errors += new_errors
+
+        print("\n" + "=" * 60)
         print("DOWNLOAD COMPLETE")
         print("=" * 60)
-        print(f"Files Downloaded: {files}")
-        print(f"Files Skipped:    {fetcher.files_skipped}")
-        print(f"Total Ticks:      {ticks:,}")
-        
+        print(f"Symbols processed: {len(symbols)}")
+        print(f"Files Downloaded:  {overall_files}")
+        print(f"Files Skipped:     {fetcher.files_skipped}")
+        print(f"Total Ticks:       {overall_ticks:,}")
+        print(f"Errors:            {overall_errors}")
+        if overall_failed_symbols:
+            print(f"Failed symbols:    {', '.join(overall_failed_symbols)}")
         if fetcher.errors:
-            print(f"\nErrors ({len(fetcher.errors)}):")
-            for err in fetcher.errors[:5]:
+            print(f"\nLast errors ({min(5, len(fetcher.errors))} of {len(fetcher.errors)}):")
+            for err in fetcher.errors[-5:]:
                 print(f"  - {err}")
-            if len(fetcher.errors) > 5:
-                print(f"  ... and {len(fetcher.errors) - 5} more")
         
-        # Show output location
-        output_path = Path(args.output) / args.symbol.upper()
-        print(f"\nData saved to: {output_path}/")
-        
-        # Verify what we got
-        result = fetcher.verify_data(args.symbol, args.start, args.end)
-        if result['dates_missing']:
-            print(f"\n⚠ Warning: {len(result['dates_missing'])} dates missing (may be weekends or no data)")
+        # Show output location(s) and per-symbol verification.  Earlier
+        # versions dereferenced the single-symbol arg here, which raised
+        # AttributeError whenever only --symbols was supplied (the
+        # singular slot stayed None).  Iterate the resolved list instead.
+        for sym in symbols:
+            output_path = Path(args.output) / sym
+            print(f"\nData saved to: {output_path}/")
+            try:
+                result = fetcher.verify_data(sym, args.start, args.end)
+            except Exception as e:
+                print(f"  verify failed for {sym}: {e}")
+                continue
+            if result['dates_missing']:
+                print(f"  ⚠ {sym}: {len(result['dates_missing'])} dates "
+                      f"missing (weekends or unavailable)")
 
 
 if __name__ == "__main__":

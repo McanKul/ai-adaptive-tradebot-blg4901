@@ -1,0 +1,59 @@
+# =====================================================================
+# config/composite_emacross_regime_v2.yaml
+# =====================================================================
+# v2 — tighter regime gate: only fires on directional trend tags.
+# Drops vol_high to avoid the OR-overlap (any-trend-or-any-high-vol)
+# that left v1's gate basically wide open.
+# =====================================================================
+
+name: emacross_regime_gated_v2
+policy: regime_gate
+
+default_sizing:
+  mode: margin_usd
+  margin_usd: 10
+  leverage: 10
+  leverage_mode: margin
+
+regime:
+  - type: ADXRegimeDetector
+    params:
+      period: 14
+      trend_threshold: 25.0
+      di_gap: 5.0
+  - type: ATRPercentileRegime
+    params:
+      atr_period: 14
+      window: 200
+      hi_pct: 0.7
+      lo_pct: 0.3
+
+slots:
+  - id: emacross_main
+    strategy: EMACrossMACDTrend
+    params:
+      fast_ema_period: 8
+      slow_ema_period: 21
+      macd_signal: 9
+      atr_period: 14
+      atr_mult: 2.0
+      adx_period: 14
+      adx_threshold: 25.0
+      volume_filter: true
+      volume_period: 20
+      risk_pct: 0.005
+      allow_reversal: false
+      exit_on_macd_cross: true
+      rsi_period: 14
+      rsi_overbought: 75.0
+      rsi_oversold: 25.0
+      use_rsi_filter: true
+      use_ema_slope: true
+      min_histogram_pct: 0.0
+      max_holding_bars: 96
+    regimes: [trend_up, trend_down]   # tighter than v1 (vol_high removed)
+    sizing:
+      mode: margin_usd
+      margin_usd: 10
+      leverage: 10
+      leverage_mode: margin

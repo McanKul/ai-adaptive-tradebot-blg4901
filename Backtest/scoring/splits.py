@@ -421,11 +421,30 @@ class WalkForwardSplit:
     def split(self) -> Iterator[Tuple[List[TimeRange], TimeRange]]:
         """
         Generate train/test splits.
-        
-        Yields:
-            Tuple of (train_ranges, test_range) for each window position.
-            train_ranges is a list with single TimeRange for consistency with PurgedKFold.
+
+        Fail-loud guard: if the data range cannot fit even ONE
+        ``train + embargo + test`` window we raise ``ValueError``.
+        Silently returning an empty iterator (the previous behaviour)
+        let walk-forward "validate" 100 parameter combinations against
+        zero out-of-sample folds — every combo got a dummy 0-trade
+        result and aggregate scores were meaningless.  Refusing up-front
+        forces the caller to either (a) shorten train/test durations,
+        (b) lower ``embargo_pct``, or (c) backfill more tick data.
         """
+        first_window_end = (
+            self.start_ns + self.train_duration_ns
+            + self._embargo_ns + self.test_duration_ns
+        )
+        if first_window_end > self.end_ns:
+            available_days = self._total_duration / 86_400e9
+            need_days = (first_window_end - self.start_ns) / 86_400e9
+            raise ValueError(
+                f"WalkForwardSplit: data range too short for one fold "
+                f"(have ~{available_days:.1f} days, need ~{need_days:.1f}). "
+                f"Reduce train/test durations or backfill tick data; "
+                f"silent 0-fold runs hide validation failures."
+            )
+
         if self.expanding:
             yield from self._expanding_split()
         else:

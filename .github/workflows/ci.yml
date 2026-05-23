@@ -42,12 +42,18 @@ jobs:
 
       - name: Run tests
         run: |
+          # `--ignore` keeps the listed modules out of *collection* — they
+          # mock `sys.modules["binance"]` at import time, which would
+          # leak into other tests' import graph.  `-m` filters by the
+          # formal pytest markers (registered in pytest.ini) so any new
+          # test that needs network or live binance can opt-out by
+          # tagging itself instead of touching this workflow.
           pytest tests/ -v --timeout=120 -x \
             --ignore=tests/test_live_engine_full.py \
             --ignore=tests/test_broker_binance.py \
             --ignore=tests/test_news_source.py \
             --ignore=tests/test_sentiment_analyzer.py \
             --ignore=tests/test_streamer_reconnect.py \
-            -k "not live and not binance and not network"
+            -m "not requires_network and not requires_binance"
         env:
           PYTHONDONTWRITEBYTECODE: "1"

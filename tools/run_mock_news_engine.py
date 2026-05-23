@@ -1,17 +1,10 @@
 """
-
-Manual runner for the News Engine.
-
-Uses MockNewsSource + GeminiSentimentAnalyzer to analyze predefined mock news
-
-and writes detailed results to mock_results.txt.
-
-
+tools/run_mock_news_engine.py
+==============================
+Mock news sentiment test — uses MockNewsSource + GeminiSentimentAnalyzer.
 
 Usage:
-
-    python run_news_engine.py
-
+    python tools/run_mock_news_engine.py
 """
 
 

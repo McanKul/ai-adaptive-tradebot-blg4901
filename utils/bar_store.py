@@ -66,10 +66,19 @@ class BarStore:
         # No manual trimming needed — deque(maxlen=N) drops oldest automatically
 
     # ---------------- Called by Strategies --------------
-    def get_ohlcv(self, symbol: str, tf: str) -> Dict[str, deque]:
-        """Returns reference, not copy – strategy can use directly.
-        numpy accepts deque: np.array(buf['close']) works unchanged."""
-        return self._data[(symbol, tf)]
+    def get_ohlcv(self, symbol: str, tf: str) -> Dict[str, List[float]]:
+        """Returns a snapshot of the OHLCV buffers as plain lists.
+
+        Lists support slicing (``data["close"][-5:]``) and equality
+        comparisons against literals — both used by strategies and tests.
+        Numpy still accepts the result via ``np.array(data["close"])``.
+
+        The list is a fresh copy of the underlying ``deque``, so mutating
+        it does not affect the buffer.  For tight loops where the deque
+        view is preferable, use the internal ``_data`` member directly.
+        """
+        buf = self._data[(symbol, tf)]
+        return {k: list(v) for k, v in buf.items()}
 
     def get_recent(self, symbol: str, tf: str, limit: int) -> List[Dict[str, float]]:
         """

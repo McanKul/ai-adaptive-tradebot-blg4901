@@ -64,6 +64,12 @@ class _DryClient:
     async def futures_change_leverage(self, symbol: str, leverage: int):
         pass
 
+    async def futures_ticker(self, symbol: str):
+        # Dry-run admits any symbol; LiveEngine's volume gate inherits
+        # the IBroker default of +inf so this is only ever called when
+        # something explicitly probes the underlying client.
+        return {"symbol": symbol, "quoteVolume": "0"}
+
     async def close_connection(self):
         pass
 
@@ -127,7 +133,29 @@ class DryBroker(IBroker):
             "[DRY] %s %s qty=%.6f @ %.8f (notional=$%.2f)",
             symbol, side, qty, price, notional,
         )
-        return {"orderId": self._next_oid()}
+        oid = self._next_oid()
+        # Phase C1: cache the synthetic fill so wait_for_fill can echo it
+        self._last_fill = {
+            "symbol": symbol, "side": side, "qty": qty,
+            "avg_price": price, "order_id": oid,
+        }
+        return {"orderId": oid}
+
+    # Phase C1 — instantaneous "fill" simulation for paper trading
+    async def wait_for_fill(
+        self, symbol: str, order_id: int, timeout: float = 5.0,
+    ) -> dict:
+        last = getattr(self, "_last_fill", None)
+        if last is None or last.get("order_id") != order_id:
+            return {"status": "TIMEOUT", "executed_qty": 0.0,
+                    "avg_price": 0.0, "commission_usd": 0.0, "raw": {}}
+        return {
+            "status": "FILLED",
+            "executed_qty": float(last["qty"]),
+            "avg_price": float(last["avg_price"]),
+            "commission_usd": 0.0,
+            "raw": last,
+        }
 
     async def close_position(self, symbol: str):
         amt = self._positions.get(symbol, 0.0)

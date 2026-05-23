@@ -15,8 +15,8 @@
 # Secim: Calmar #5 (konservatif) — dusuk DD, robust
 #
 # Kullanim:
-#     python live_runner.py --config live_config_emacross.yaml
-#     python live_runner.py --config live_config_emacross.yaml --dry-run
+#     python app.py live --config live_config_emacross.yaml
+#     python app.py dry-run --config live_config_emacross.yaml
 # =====================================================================
 
 # ---------- strategy ----------
@@ -34,7 +34,7 @@ strategy:
     volume_filter: true               # Sweep: noise filtresi, her zaman acik
     volume_period: 20                 # 20-bar volume SMA
     risk_pct: 0.005                   # %0.5 risk/trade
-    allow_reversal: true              # Ters yonde girise izin ver
+    allow_reversal: false             # close+open non-atomic; off until B5 lands
     exit_on_macd_cross: true          # KRITIK: kapali → %23 basari, acik → %66
     # Sinyal guclendiriciler
     rsi_period: 14                    # RSI hesaplama periyodu
@@ -45,31 +45,21 @@ strategy:
     min_histogram_pct: 0.0            # Min histogram esigi (ATR %'si, backtest ile optimize et)
 
 # ---------- symbols & timeframe ----------
+# WARNING: this profile used to open 23 symbols at 10x leverage —
+# any alt-season blow-out wiped most of the equity in one bar.  Now
+# trimmed to 5 highest-liquidity USDT-M perps that move on their own
+# news flow and behave reasonably under backtest realism.  If you
+# really want the long tail, use config/profiles/aggressive.yaml and
+# accept the correlation risk.
 symbols:
-  # BTCUSDT/ETHUSDT removed — $5 margin too low for min lot size
+  - BTCUSDT
+  - ETHUSDT
   - SOLUSDT
-  - XRPUSDT
-  - DOGEUSDT
-  - ADAUSDT
   - AVAXUSDT
-  - DOTUSDT
   - LINKUSDT
-  - POLUSDT
-  - NEARUSDT
-  - APTUSDT
-  - ARBUSDT
-  - OPUSDT
-  - SUIUSDT
-  - SEIUSDT
-  - INJUSDT
-  - TIAUSDT
-  - FTMUSDT
-  - ATOMUSDT
-  - FILUSDT
-  - RUNEUSDT
-  - WLDUSDT
-  - 1000PEPEUSDT
-  - WIFUSDT
+
+# Phase D liquidity gate — drops anything thin at startup.
+min_24h_volume_usd: 100_000_000
 
 timeframe: "15m"
 name: "EMACross_MACD_Trend_15m"
@@ -77,8 +67,9 @@ name: "EMACross_MACD_Trend_15m"
 # ---------- position sizing ----------
 sizing:
   mode: "margin_usd"
-  margin_usd: 10.0                     # $10 margin per trade ($21 bakiye icin uygun)
-  leverage: 10                        # 10x → $100 notional per trade
+  margin_usd: 10.0                     # $10 margin per trade
+  leverage: 5                         # 5x cap; previous 10x amplified
+                                       # canary-stage mistakes too much
   leverage_mode: "margin"
 
 # ---------- exit rules ----------
@@ -88,7 +79,7 @@ exit:
   take_profit_pct: 1.00               # Margin'in %100'u = 10x'de %10 fiyat hareketi (R:R = 1:2)
   stop_loss_pct: 0.50                 # Margin'in %50'si = 10x'de %5 fiyat hareketi (max $5 kayip/trade)
   trailing_stop_pct: null             # Strateji icinde var (ATR-based)
-  max_holding_bars: 96               # 96 bar x 5m = 8 saat MAX tutma suresi (safety net)
+  max_holding_bars: 96               # 96 bar x 15m = 24 saat MAX tutma suresi (safety net)
   use_exchange_orders: true           # Exchange'de STOP_MARKET + TAKE_PROFIT_MARKET olarak yerlesir
 
 # =====================================================================

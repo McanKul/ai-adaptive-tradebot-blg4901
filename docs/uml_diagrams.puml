@@ -119,10 +119,8 @@ package "Utils" <<utils>> as UT {
   [levels] #D5D8DC
 }
 
-package "Entry Points" <<entry>> as EP {
-  [main.py] #FAD7A0
-  [live_runner.py] #FAD7A0
-  [run_unified_backtest.py] #FAD7A0
+package "Entry Point" <<entry>> as EP {
+  [app.py] #FAD7A0
 }
 
 BT -[#2980B9]-> IF : <<implements>>
@@ -658,7 +656,7 @@ skinparam sequence {
 }
 
 actor "Trader" as User #F9E79F
-participant "live_runner.py" as Runner #FAD7A0
+participant "app.py" as Runner #FAD7A0
 participant "LiveEngine" as Engine #A3E4D7
 participant "Streamer" as Stream #AED6F1
 participant "BarStore" as BS #D6EAF8

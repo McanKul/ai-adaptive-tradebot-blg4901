@@ -1,0 +1,101 @@
+# config/profiles/canary.yaml
+# ============================
+# First-real-money canary — execution-validation purpose only, NOT
+# designed to make money.  After 7 clean days expand to 2 symbols, then
+# bump margin / leverage one rung at a time.
+#
+# Conservative, defensive defaults.  Use only after the bot has cleared
+# a 24h dry-run with:
+#   * tools/compare_backtest_live.py match_rate >= 0.80
+#   * 0 drift events
+#   * 0 rejection-storm trips
+#   * 0 missing-stop guards firing
+#
+# To launch:
+#     python app.py live --config config/profiles/canary.yaml --run-id canary
+
+name: canary_v1
+run_id: canary
+
+# ── Whitelist + liquidity gate (Phase D) ─────────────────────────────
+# First canary: BTCUSDT only.  Multi-symbol expansion happens after a
+# 7-day clean run on this single pair.
+symbols:
+  - BTCUSDT
+min_24h_volume_usd: 100_000_000     # 100M USDT/24h floor
+timeframe: 15m
+
+# ── Strategy ─────────────────────────────────────────────────────────
+strategy:
+  class: EMACrossMACDTrend
+  params:
+    fast_ema_period: 12
+    slow_ema_period: 26
+    macd_signal: 9
+    use_ema_slope: true
+    use_rsi_filter: true
+    volume_filter: true
+    allow_reversal: false       # canary keeps reversal off until B5 lands
+    exit_on_macd_cross: true
+
+# ── Sizing ───────────────────────────────────────────────────────────
+sizing:
+  mode: margin_usd
+  margin_usd: 10.0              # ~$10 of margin per trade — first canary
+  leverage: 2                   # canary cap; bump after 7 clean days
+  leverage_mode: margin
+
+# ── Execution policy (Phase B + C + E1) ──────────────────────────────
+execution:
+  margin_type: ISOLATED
+  preload_bars: 250
+  preload_batch: 25
+  max_entry_spread_bps: 3.0     # reject when bookTicker spread > 3 bps
+  max_slippage_bps: 10.0        # abort + close if realised > 10 bps
+  max_tick_age_seconds: 30      # block entries on stale feed
+
+# ── Exit policy ──────────────────────────────────────────────────────
+exit:
+  take_profit_pct: 0.025
+  stop_loss_pct: 0.012
+  trailing_stop_pct: 0.008
+  max_holding_bars: 96
+  use_exchange_orders: true     # server-side STOP_MARKET / TAKE_PROFIT
+
+# ── Pre-trade risk ───────────────────────────────────────────────────
+# First-real-money discipline: ONE position at a time.  Promote to 2
+# only after the canary has run 7 clean days (see promotion checklist).
+risk:
+  max_concurrent_positions: 1
+  max_position_notional: 50.0
+  max_leverage: 2
+
+# ── Account-level risk + daily-loss + cooldown (Phase A) ─────────────
+global_risk:
+  max_concurrent_positions: 1
+  max_total_exposure_usd: 50.0
+  max_account_drawdown_pct: 0.03    # 3% peak-to-trough kill
+  max_daily_loss: 10.0              # USD
+  max_daily_loss_pct: 0.02          # 2% of start equity
+  cooldown_after_losses: 3
+  cooldown_seconds: 1800            # 30 min auto-resume
+  persist_path: logs/live_risk_state.json
+
+# ── Liquidation early warning (already integrated) ───────────────────
+liquidation_guard:
+  enabled: true
+  buffer_pct: 0.30                  # close at 30% cushion remaining
+  maintenance_margin_ratio: 0.005
+
+# ── Position drift detection ─────────────────────────────────────────
+reconciliation:
+  enabled: true
+  interval_seconds: 30
+  qty_tolerance: 1e-6
+  action: halt
+
+# ── Sentiment OFF for canary control group ──────────────────────────
+news:
+  enabled: false
+
+testnet: false

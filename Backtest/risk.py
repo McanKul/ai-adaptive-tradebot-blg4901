@@ -16,7 +16,7 @@ Features:
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Sequence
 import logging
 
 from Interfaces.orders import Order, OrderSide
@@ -186,6 +186,57 @@ class BasicRiskManager:
         self._approved_orders += 1
         return True
     
+    def validate_order_set(
+        self,
+        orders: Sequence[Order],
+        portfolio: "Any",
+        bar: Bar,
+    ) -> bool:
+        """Validate a *set* of orders atomically.
+
+        Useful for paired arbitrage legs (spot + perp) and for multi-slot
+        composite strategies that want all-or-nothing execution.  Runs
+        ``pre_trade_check`` on every order while shielding the underlying
+        counters; if any leg would fail, returns ``False`` without
+        side-effects.  On success, the counters are committed exactly once.
+
+        Args:
+            orders: All orders that should land together.
+            portfolio: Portfolio state (passed through).
+            bar: Current bar (passed through).
+
+        Returns:
+            ``True`` iff every leg passes.  Composite/strategy callers
+            can then submit the orders to the engine with confidence
+            that the engine's per-order check will not reject any of
+            them — assuming portfolio/bar state is unchanged between
+            this call and submission, which is the contract.
+        """
+        if not orders:
+            return True
+
+        snap = (
+            self._orders_this_bar,
+            self._rejected_orders,
+            self._approved_orders,
+        )
+        all_ok = True
+        for o in orders:
+            ok = self.pre_trade_check(o, portfolio, bar)
+            if not ok:
+                all_ok = False
+                break
+        if not all_ok:
+            # Rollback counters so the rejected set doesn't leak into stats
+            (
+                self._orders_this_bar,
+                self._rejected_orders,
+                self._approved_orders,
+            ) = snap
+            # Bump rejected_orders ONCE for the whole set (visibility)
+            self._rejected_orders += 1
+        return all_ok
+
     def check_drawdown(self, portfolio: "Any") -> bool:
         """
         Check if drawdown exceeds limit.

@@ -155,6 +155,20 @@ class BorrowConfig:
 # Top-level realism container
 # ---------------------------------------------------------------------------
 @dataclass
+class PartialFillConfigDTO:
+    """Realism-side mirror of ``execution_models.PartialFillConfig`` so
+    YAML can drive partial-fill simulation through a single
+    ``RealismConfig.partial_fills`` block.
+
+    Defaults match ``EngineConfig`` legacy values so an empty realism
+    YAML is a no-op.
+    """
+    enabled: bool = False
+    liquidity_scale: float = 10.0
+    min_fill_ratio: float = 0.1
+
+
+@dataclass
 class RealismConfig:
     """
     Top-level container grouping all realism knobs.
@@ -164,6 +178,7 @@ class RealismConfig:
     transaction_costs: TransactionCostConfig = field(default_factory=TransactionCostConfig)
     funding: FundingConfig = field(default_factory=FundingConfig)
     borrow: BorrowConfig = field(default_factory=BorrowConfig)
+    partial_fills: PartialFillConfigDTO = field(default_factory=PartialFillConfigDTO)
 
     # --- CV config (Part C) ---
     cv_enabled: bool = False
@@ -182,16 +197,25 @@ class RealismConfig:
         tc_d = d.get("transaction_costs", {})
         funding_d = d.get("funding", {})
         borrow_d = d.get("borrow", {})
+        partial_d = d.get("partial_fills", {})
         tc = TransactionCostConfig(**{k: v for k, v in tc_d.items()
                                       if k in TransactionCostConfig.__dataclass_fields__})
         funding = FundingConfig(**{k: v for k, v in funding_d.items()
                                    if k in FundingConfig.__dataclass_fields__})
         borrow = BorrowConfig(**{k: v for k, v in borrow_d.items()
                                   if k in BorrowConfig.__dataclass_fields__})
+        partial = PartialFillConfigDTO(**{
+            k: v for k, v in (partial_d or {}).items()
+            if k in PartialFillConfigDTO.__dataclass_fields__
+        })
         remaining = {k: v for k, v in d.items()
-                     if k not in ("transaction_costs", "funding", "borrow")
+                     if k not in ("transaction_costs", "funding", "borrow",
+                                   "partial_fills")
                      and k in RealismConfig.__dataclass_fields__}
-        return RealismConfig(transaction_costs=tc, funding=funding, borrow=borrow, **remaining)
+        return RealismConfig(
+            transaction_costs=tc, funding=funding, borrow=borrow,
+            partial_fills=partial, **remaining,
+        )
 
     @staticmethod
     def from_yaml(path: str) -> "RealismConfig":

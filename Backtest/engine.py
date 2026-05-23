@@ -587,9 +587,15 @@ class BacktestEngine:
             result.metadata["total_unfilled_qty"] = exec_stats.total_unfilled_qty
             result.metadata["avg_fill_ratio"] = exec_stats.avg_fill_ratio
         
+        # ``total_return_pct`` is stored as a percentage value (e.g.
+        # 0.44 means +0.44%, NOT +44%).  Python's ``:.2%`` would
+        # multiply by 100 a second time and print "44.00%".  Use plain
+        # float formatting + literal '%' so the unit matches the
+        # tabular ``BacktestService.print_result`` output.
         log.info(
             f"Backtest complete: {self._tick_count} ticks, {self._bar_count} bars, "
-            f"return={result.total_return_pct:.2%}, sharpe={result.sharpe_ratio:.2f}"
+            f"return={result.total_return_pct:+.2f}%, "
+            f"sharpe={result.sharpe_ratio:.2f}"
         )
         
         return result
@@ -741,10 +747,24 @@ class BacktestEngine:
         from Interfaces.IStrategy import StrategyDecision
         
         result = strategy.on_bar(bar, ctx)
-        
+
         # Handle different return types
         if isinstance(result, StrategyDecision):
             orders = result.orders
+            # Bridge strategy ATR/trail level to the tick-exit handler so
+            # the stop fires intra-bar instead of at next bar close.
+            # Strategies publish via decision.metadata["strategy_stop_price"];
+            # passing None clears any previous level (e.g. after exit).
+            if (
+                self.config.enable_tick_exit
+                and self.exit_manager is not None
+                and isinstance(result.metadata, dict)
+                and "strategy_stop_price" in result.metadata
+            ):
+                self.exit_manager.set_strategy_stop(
+                    bar.symbol,
+                    result.metadata.get("strategy_stop_price"),
+                )
         elif isinstance(result, list):
             orders = result
         else:
@@ -1053,9 +1073,16 @@ class BacktestEngine:
                      self.config.tp_pct, self.config.sl_pct, self.config.trailing_stop_pct)
             return
 
-        # No exit manager
-        self.exit_manager = None
-        log.debug("No exit manager configured - tick-level TP/SL disabled")
+        # No engine-level TP/SL rules, but strategies may still publish a
+        # per-bar ATR trail level via decision.metadata["strategy_stop_price"].
+        # Always provide an ExitManager so that bridge stays live when
+        # tick-exit is enabled.
+        if self.config.enable_tick_exit:
+            self.exit_manager = ExitManager(ExitConfig(leverage=self.config.leverage))
+            log.info("Created bare ExitManager for strategy-published trail (no engine-level TP/SL)")
+        else:
+            self.exit_manager = None
+            log.debug("No exit manager configured - tick-level TP/SL disabled")
     
     def _check_tick_exit(self, tick: Tick) -> None:
         """

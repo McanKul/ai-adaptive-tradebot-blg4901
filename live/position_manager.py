@@ -78,6 +78,27 @@ class Position:
         self.peak_price = entry_price
         self.peak_pnl: float = 0.0
 
+        # Liquidation early-warning bookkeeping
+        # Set by ``PositionManager.open()`` once leverage / MMR are known.
+        self.liq_price: Optional[float] = None
+
+        # Phase B2 — execution-quality bookkeeping.  ``intended_price``
+        # is captured at signal time (mark) before any rounding;
+        # ``fill_price`` lands once the fill confirmation polling in
+        # Phase C1 reports the broker's avg fill.  Until C1 they are
+        # equal so ``slippage_bps`` is 0 and the abort branch silent.
+        self.intended_price: float = entry_price
+        self.fill_price: Optional[float] = None
+        self.slippage_bps: Optional[float] = None
+
+        # Phase B4 — fee / funding accounting.  Populated by
+        # ``LiveMetrics.record`` from broker fill data and funding
+        # payment history (best-effort; broker errors leave them at
+        # 0 so the gross PnL still gets logged).
+        self.entry_fee_usd: float = 0.0
+        self.exit_fee_usd: float = 0.0
+        self.funding_usd: float = 0.0
+
         # Throttle for exchange-side fill checks
         self._last_exchange_check: float = 0.0
 
@@ -125,10 +146,20 @@ class PositionManager:
         exit_cfg: ExitConfig,
         max_concurrent: int = 3,
         symbol: Optional[str] = None,
+        liq_guard_cfg: Optional[Any] = None,
+        execution_cfg: Optional[Any] = None,
+        book_streamer: Optional[Any] = None,
     ):
         self.broker = broker
         self.sizing_cfg = sizing_cfg
         self.exit_cfg = exit_cfg
+        # Optional ``LiquidationGuardConfig``; when None the guard is off
+        # and the tick checker short-circuits.
+        self.liq_guard_cfg = liq_guard_cfg
+        # Phase B1 — execution policy (spread filter, slippage budget, ...)
+        # and the bookTicker streamer used to read live bid/ask.
+        self.execution_cfg = execution_cfg
+        self.book_streamer = book_streamer
         self.max_open = max_concurrent
         self.symbol: Optional[str] = symbol
 
@@ -139,11 +170,27 @@ class PositionManager:
     # Helpers
     # ------------------------------------------------------------------
     def position_qty(self, symbol: str) -> float:
-        """Return signed qty for a symbol (positive=long, negative=short)."""
+        """Return signed qty for a symbol (positive=long, negative=short).
+
+        With composite strategies the same symbol may host multiple
+        ``(symbol, strategy_name)`` buckets at once; this helper returns
+        the *first* open bucket's qty for backwards compatibility with
+        single-strategy callers.  Composite paths must use
+        :meth:`position_qty_for` to read a specific slot's qty."""
         for (sym, _), pos in self.open_positions.items():
             if sym == symbol and not pos.closed:
                 return pos.qty if pos.is_long else -pos.qty
         return 0.0
+
+    def position_qty_for(self, symbol: str, strategy_name: str) -> float:
+        """Return signed qty for a single ``(symbol, strategy_name)``
+        bucket, or 0.0 when no open position exists.  Composite live
+        execution uses this to read a specific slot's position without
+        being confused by sibling slots that share the same symbol."""
+        pos = self.open_positions.get((symbol, strategy_name))
+        if pos is None or pos.closed:
+            return 0.0
+        return pos.qty if pos.is_long else -pos.qty
 
     @staticmethod
     def _round_price(raw: float, tick: float, up: bool = False) -> float:
@@ -152,10 +199,15 @@ class PositionManager:
         factor = 1 / tick
         return (math.ceil if up else math.floor)(raw * factor) / factor
 
-    async def _symbol_filters(self, symbol: str, qty_f: float) -> tuple[float, float]:
-        """Query exchange LOT_SIZE & PRICE_FILTER for *symbol* (cached).
-        Returns (rounded_qty, tick_size). Falls back to (qty_f, 0.0) if
-        filters are unavailable (e.g. DryBroker or exchange_info error).
+    async def _symbol_filters(
+        self, symbol: str, qty_f: float,
+    ) -> tuple[float, float, Optional[float]]:
+        """Query exchange LOT_SIZE / PRICE_FILTER / MIN_NOTIONAL.
+
+        Returns ``(rounded_qty, tick_size, min_notional_usd)``.
+        ``min_notional_usd`` may be ``None`` when the exchange does
+        not advertise the filter or for stub brokers (DryBroker).
+        Falls back to ``(qty_f, 0.0, None)`` on any error.
         """
         try:
             if hasattr(self.broker, 'exchange_info'):
@@ -163,6 +215,7 @@ class PositionManager:
             else:
                 info = await self.broker.client.futures_exchange_info()
             step = tick = None
+            min_notional: Optional[float] = None
             for s in info["symbols"]:
                 if s["symbol"] == symbol:
                     for f in s["filters"]:
@@ -170,16 +223,24 @@ class PositionManager:
                             lot = float(f["stepSize"])
                             factor = 1 / lot
                             step = math.floor(qty_f * factor) / factor
-                        if f["filterType"] == "PRICE_FILTER":
+                        elif f["filterType"] == "PRICE_FILTER":
                             tick = float(f["tickSize"])
+                        elif f["filterType"] == "MIN_NOTIONAL":
+                            # Binance USDT-M futures uses ``notional``;
+                            # spot uses ``minNotional``.  Accept either.
+                            raw = f.get("notional") or f.get("minNotional")
+                            if raw is not None:
+                                try:
+                                    min_notional = float(raw)
+                                except (TypeError, ValueError):
+                                    min_notional = None
                     if tick is not None and step is not None:
-                        return step, tick
-            # Symbol not found in exchange info — use raw qty (e.g. DryBroker)
+                        return step, tick, min_notional
             log.debug("%s not found in exchange_info, using raw qty=%.6f", symbol, qty_f)
-            return qty_f, 0.0
+            return qty_f, 0.0, None
         except Exception as e:
             log.error("Failed to get LOT_SIZE/PRICE_FILTER %s: %s", symbol, e)
-            return qty_f, 0.0
+            return qty_f, 0.0, None
 
     # ------------------------------------------------------------------
     # Compute SL / TP prices
@@ -281,15 +342,61 @@ class PositionManager:
         if key in self.open_positions or len(self.open_positions) >= self.max_open:
             return False
 
-        # 1) Get mark price (via broker — rate limited + cached)
+        # ── Phase B1: spread filter (default-deny) ────────────────────
+        # Reject when the live bookTicker spread is wider than the
+        # configured max OR when no tick has arrived yet (we don't
+        # send orders into an opaque market).  Disabled by setting
+        # ``max_entry_spread_bps`` to 0.
+        max_spread = float(getattr(self.execution_cfg, "max_entry_spread_bps", 0.0) or 0.0)
+        if max_spread > 0:
+            if self.book_streamer is None:
+                # Earlier this branch silently bypassed the filter, which
+                # turned a book-streamer outage into "allow all" — the
+                # exact opposite of what max_entry_spread_bps was set
+                # for.  In real-money mode that's unacceptable; block.
+                log.warning(
+                    "%s [%s] entry blocked — book streamer unavailable; "
+                    "spread filter cannot evaluate",
+                    symbol, strategy_name,
+                )
+                return False
+            spread_bps = self.book_streamer.get_spread_bps(symbol)
+            if spread_bps is None:
+                log.warning("%s [%s] entry blocked — no bookTicker yet (spread filter on)",
+                            symbol, strategy_name)
+                return False
+            if spread_bps > max_spread:
+                log.info("%s [%s] entry blocked — spread %.2fbps > %.2fbps",
+                         symbol, strategy_name, spread_bps, max_spread)
+                return False
+
+        # 1) Get mark price (via broker — rate limited + cached).
+        # This is the ``intended price`` we'll compare the actual fill
+        # against in Phase B2 once C1 (fill confirmation) lands.
         mark_price = await self.broker.get_mark_price(symbol)
+        intended_price = mark_price
 
         # 2) Compute quantity from SizingConfig
         raw_qty = self.sizing_cfg.compute_qty(mark_price)
-        qty, tick = await self._symbol_filters(symbol, raw_qty)
+        qty, tick, min_notional = await self._symbol_filters(symbol, raw_qty)
         if qty <= 0:
             log.warning("%s qty rounded to 0 — skipping", symbol)
             return False
+
+        # Phase B3 — MIN_NOTIONAL filter.  Binance silently rejects
+        # orders below the symbol's min notional; we surface the
+        # rejection up front and skip the trade rather than letting
+        # the broker raise on submit.
+        if min_notional is not None:
+            order_notional = qty * mark_price
+            if order_notional < min_notional:
+                log.warning(
+                    "%s [%s] entry blocked — notional %.4f USD < min %.4f USD "
+                    "(qty=%.6f price=%.6f)",
+                    symbol, strategy_name, order_notional, min_notional,
+                    qty, mark_price,
+                )
+                return False
 
         side_str = SIDE_BUY if side == 1 else SIDE_SELL
         opp_str = SIDE_SELL if side_str == SIDE_BUY else SIDE_BUY
@@ -305,11 +412,27 @@ class PositionManager:
         # 4) Compute SL/TP prices from ExitConfig
         sl_price, tp_price = self._compute_sl_tp_prices(side_str, mark_price, tick)
 
-        # 5) Place orders — capture exchange order IDs
+        # 5) Place orders — capture exchange order IDs.  Phase C1
+        # introduces fill-confirmation polling: we now treat the
+        # broker response's order_id as a handle and wait until the
+        # exchange confirms FILLED (or PARTIAL_FILLED + timeout).
         sl_order_id: Optional[int] = None
         tp_order_id: Optional[int] = None
+        fill: Optional[dict] = None
         try:
-            await self.broker.market_order(symbol, side_str, qty)
+            mo_resp = await self.broker.market_order(symbol, side_str, qty)
+            mo_order_id = (
+                mo_resp.get("orderId") or mo_resp.get("order_id")
+                if isinstance(mo_resp, dict) else None
+            )
+            if mo_order_id is not None and hasattr(self.broker, "wait_for_fill"):
+                try:
+                    fill = await self.broker.wait_for_fill(
+                        symbol, int(mo_order_id), timeout=5.0,
+                    )
+                except Exception as e:  # pragma: no cover — defensive
+                    log.warning("%s wait_for_fill error: %s", symbol, e)
+                    fill = None
 
             if self.exit_cfg.use_exchange_orders:
                 if sl_price is not None:
@@ -320,12 +443,87 @@ class PositionManager:
             log.error("Order placement failed %s: %s", symbol, e)
             return False
 
-        # 6) Track position
+        # ── Phase B2+C1: slippage measurement + abort ──────────────────
+        # Compute realised slippage (signed by side; positive=adverse).
+        # Abort if it exceeds the configured budget — we eat the small
+        # round-trip fee instead of carrying a position with a price
+        # we did not agree to.
+        actual_fill_price = (
+            float(fill["avg_price"]) if fill and fill.get("avg_price") else mark_price
+        )
+        executed_qty = (
+            float(fill["executed_qty"]) if fill and fill.get("executed_qty") else qty
+        )
+        if executed_qty <= 0:
+            log.error("%s [%s] fill returned executed_qty=0 — aborting entry",
+                      symbol, strategy_name)
+            try:
+                await self.broker.close_position(symbol)
+            except Exception:
+                pass
+            return False
+        if actual_fill_price > 0:
+            sign = 1.0 if side_str == SIDE_BUY else -1.0
+            slippage_bps_val = (
+                (actual_fill_price - intended_price) / intended_price * 1e4 * sign
+            )
+        else:
+            slippage_bps_val = 0.0
+
+        max_slip = float(getattr(self.execution_cfg, "max_slippage_bps", 0.0) or 0.0)
+        if max_slip > 0 and abs(slippage_bps_val) > max_slip:
+            log.error(
+                "%s [%s] SLIPPAGE_ABORT — %.2fbps > %.2fbps; closing immediately",
+                symbol, strategy_name, slippage_bps_val, max_slip,
+            )
+            try:
+                await self.broker.close_position(symbol)
+                if sl_order_id and hasattr(self.broker, "cancel_order"):
+                    try:
+                        await self.broker.cancel_order(symbol, sl_order_id)
+                    except Exception:
+                        pass
+                if tp_order_id and hasattr(self.broker, "cancel_order"):
+                    try:
+                        await self.broker.cancel_order(symbol, tp_order_id)
+                    except Exception:
+                        pass
+            except Exception as e:
+                log.error("%s slippage abort close failed: %s", symbol, e)
+            return False
+
+        # ── Phase A2: missing-stop guard ──────────────────────────────
+        # Entry succeeded but the server-side STOP_MARKET did NOT.  We
+        # are now naked-long/short with no on-exchange protection and
+        # local tick-exits depend on a healthy WS feed.  That is not
+        # acceptable for real money — close immediately and leave the
+        # ledger flat instead of accepting a position we can't protect.
+        if (getattr(self.exit_cfg, "use_exchange_orders", False)
+                and sl_price is not None and sl_order_id is None):
+            log.error(
+                "%s [%s] MISSING-STOP at entry — closing position; "
+                "sl_price=%.8f failed to register on exchange",
+                symbol, strategy_name, sl_price,
+            )
+            try:
+                await self.broker.close_position(symbol)
+                # Cancel any TP that did register, to avoid orphan
+                if tp_order_id and hasattr(self.broker, "cancel_order"):
+                    try:
+                        await self.broker.cancel_order(symbol, tp_order_id)
+                    except Exception:
+                        pass
+            except Exception as e:
+                log.error("%s missing-stop force-close failed: %s — manual review",
+                          symbol, e)
+            return False
+
+        # 6) Track position with the *actual* fill price + qty
         pos = Position(
             symbol=symbol,
             side=side_str,
-            qty=qty,
-            entry_price=mark_price,
+            qty=executed_qty,
+            entry_price=actual_fill_price,
             sl_price=sl_price,
             tp_price=tp_price,
             opened_ts=time.time(),
@@ -336,6 +534,14 @@ class PositionManager:
         )
         pos.sl_order_id = sl_order_id
         pos.tp_order_id = tp_order_id
+        # Phase B2 / C1: persisted execution fields
+        pos.intended_price = intended_price
+        pos.fill_price = actual_fill_price
+        pos.slippage_bps = slippage_bps_val
+        # Phase B4: entry-side commission from the fill (USDT-equivalent)
+        if fill:
+            pos.entry_fee_usd = float(fill.get("commission_usd") or 0.0)
+        self.assign_liq_price(pos)
         self.open_positions[key] = pos
 
         log.info(
@@ -420,6 +626,265 @@ class PositionManager:
 
         for key in closed_keys:
             del self.open_positions[key]
+
+    # ------------------------------------------------------------------
+    # Liquidation early-warning
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def compute_liq_price(
+        side: str,
+        entry_price: float,
+        leverage: float,
+        maintenance_margin_ratio: float,
+    ) -> float:
+        """Approximate Binance USDT-M cross-margin liquidation price.
+
+        Long:  ``liq = entry * (1 - 1/leverage + mmr)``
+        Short: ``liq = entry * (1 + 1/leverage - mmr)``
+
+        This is a *first-order* estimate — the real liquidation engine
+        looks at maintenance margin tiers (notional-dependent) and the
+        wallet's cross balance.  For the early-warning use-case we
+        only need a price within ~1 % of the true level so we can
+        bail out before the engine hits us.  The 1% accuracy is well
+        inside the ``buffer_pct`` cushion the user picks.
+        """
+        if leverage <= 0 or entry_price <= 0:
+            return 0.0
+        if side == SIDE_BUY:  # long
+            return entry_price * max(0.0, 1.0 - 1.0 / leverage + maintenance_margin_ratio)
+        # short
+        return entry_price * (1.0 + 1.0 / leverage - maintenance_margin_ratio)
+
+    def assign_liq_price(self, pos: Position) -> None:
+        """Compute and store the liquidation price on a freshly-opened
+        position.  Idempotent — reassigning is safe when leverage or MMR
+        changes mid-life (rare)."""
+        if self.liq_guard_cfg is None:
+            return
+        leverage = self.sizing_cfg.leverage if self.sizing_cfg.leverage > 0 else 1.0
+        mmr = self.liq_guard_cfg.maintenance_margin_ratio
+        pos.liq_price = self.compute_liq_price(
+            pos.side, pos.entry, leverage, mmr,
+        )
+
+    async def check_missing_stop(
+        self, symbol: str, tick_price: float,
+    ) -> List[str]:
+        """Phase A2 tick-time recheck for stop-less open positions.
+
+        The entry path already aborts when a fresh ``STOP_MARKET`` fails
+        to register, but a stop can also disappear later (manual cancel
+        from the Binance UI, exchange-side glitch, exchange-side fill +
+        we missed the close).  Anything still open with
+        ``sl_order_id is None`` while ``use_exchange_orders=True`` is
+        unprotected — force-close at the current mark.
+
+        Returns the strategy keys that were closed.
+        """
+        # Defensive: backtest's ExitConfig (Backtest/exit_manager.py) does
+        # not carry ``use_exchange_orders`` — assume False there to keep
+        # the guard live-only.
+        if not getattr(self.exit_cfg, "use_exchange_orders", False):
+            return []
+        closed: List[str] = []
+        now = time.time()
+        for key, pos in list(self.open_positions.items()):
+            sym, strat = key
+            if sym != symbol or pos.closed:
+                continue
+            if pos.sl_order_id is not None:
+                continue
+            log.error(
+                "%s [%s] MISSING-STOP detected at tick — force closing @ %.8f",
+                sym, strat, tick_price,
+            )
+            try:
+                await self.broker.close_position(sym)
+                await self._cancel_position_orders(pos)
+            except Exception as e:
+                log.error("%s missing-stop close failed: %s", sym, e)
+                continue
+            pos.closed = True
+            pos.exit_ts = now
+            pos.exit = tick_price
+            pos.exit_type = "MISSING_STOP"
+            self.history.append(pos)
+            del self.open_positions[key]
+            closed.append(strat)
+        return closed
+
+    async def check_liquidation_warning(
+        self, symbol: str, tick_price: float,
+    ) -> List[str]:
+        """Pre-emptive close if mark price is uncomfortably close to liq.
+
+        Called by ``on_tick``.  Skips if the guard is disabled or no
+        position has a recorded ``liq_price``.  Returns the list of
+        strategy keys that closed during this call.
+
+        Trigger rule:
+            ``distance_to_liq / abs(entry - liq) < buffer_pct``
+
+        i.e. we have less than ``buffer_pct`` of the original safety
+        margin remaining.  Default buffer is 0.20 → close once we are
+        within the last 20 % of the cushion.
+        """
+        cfg = self.liq_guard_cfg
+        if cfg is None or not cfg.enabled:
+            return []
+
+        closed: List[str] = []
+        now = time.time()
+        for key, pos in list(self.open_positions.items()):
+            sym, strat = key
+            if sym != symbol or pos.closed or pos.liq_price is None:
+                continue
+
+            # Both sides: distance is positive when we're alive.
+            if pos.is_long:
+                distance = tick_price - pos.liq_price
+                cushion = pos.entry - pos.liq_price
+            else:
+                distance = pos.liq_price - tick_price
+                cushion = pos.liq_price - pos.entry
+
+            if cushion <= 0:
+                # Should not happen with sensible inputs; bail to be safe.
+                continue
+
+            ratio = distance / cushion
+            if ratio >= cfg.buffer_pct:
+                continue
+
+            log.error(
+                "%s [%s] LIQ-WARN price=%.8f liq=%.8f cushion=%.4f "
+                "remaining=%.1f%% (buffer=%.1f%%) action=%s",
+                sym, strat, tick_price, pos.liq_price, cushion,
+                ratio * 100.0, cfg.buffer_pct * 100.0, cfg.action,
+            )
+
+            if cfg.action == "alarm":
+                continue
+
+            try:
+                await self.broker.close_position(sym)
+                await self._cancel_position_orders(pos)
+            except Exception as e:
+                log.error("%s liq-guard close failed: %s", sym, e)
+                continue
+
+            pos.closed = True
+            pos.exit_ts = now
+            pos.exit = tick_price
+            pos.exit_type = "LIQ_GUARD"
+            self.history.append(pos)
+            del self.open_positions[key]
+            closed.append(strat)
+        return closed
+
+    # ------------------------------------------------------------------
+    # Tick-level exits (intra-bar)
+    # ------------------------------------------------------------------
+    async def check_tick_exits(self, symbol: str, tick_price: float) -> List[str]:
+        """Run local-only exit checks at tick granularity.
+
+        Called by ``LiveEngine`` whenever the mark-price tick stream
+        produces a new price for *symbol*.  Server-side ``STOP_MARKET``
+        / ``TAKE_PROFIT_MARKET`` orders cover plain TP/SL at the
+        exchange, so this method **deliberately skips** flat TP/SL
+        triggers (they would race the server-side fills and cause
+        double-close attempts).  It evaluates only the rules that the
+        exchange cannot run for us:
+
+        * **Trailing stop** — peak update is now per-tick instead of
+          per-bar, which is a real correctness fix as well as a speed
+          fix.
+        * **Max-holding (time-based)** — uses wall-clock seconds so
+          we don't have to wait for a bar boundary to release a stale
+          position.
+        * **USD-target exit** — ``take_profit_usd`` / ``stop_loss_usd``
+          on the local ``ExitConfig`` if set.
+
+        Returns the list of strategy keys that closed during this call
+        (mostly for tests; production callers can ignore it).
+        """
+        closed: List[str] = []
+        now = time.time()
+        for key, pos in list(self.open_positions.items()):
+            sym, strat = key
+            if sym != symbol or pos.closed:
+                continue
+
+            exit_type = self._check_local_exit_tick(pos, tick_price, now)
+            if exit_type is None:
+                continue
+
+            log.info(
+                "%s [%s] tick-exit: %s @ %.8f",
+                sym, strat, exit_type, tick_price,
+            )
+            try:
+                await self.broker.close_position(sym)
+                await self._cancel_position_orders(pos)
+            except Exception as e:
+                log.error("%s tick-exit close failed: %s", sym, e)
+                continue
+
+            pos.closed = True
+            pos.exit_ts = now
+            pos.exit = tick_price
+            pos.exit_type = exit_type
+            self.history.append(pos)
+            del self.open_positions[key]
+            closed.append(strat)
+        return closed
+
+    def _check_local_exit_tick(
+        self,
+        pos: Position,
+        tick_price: float,
+        now: float,
+    ) -> Optional[str]:
+        """Local-only exit rules suitable for tick granularity.
+
+        Skips flat TP/SL since the exchange's ``STOP_MARKET`` /
+        ``TAKE_PROFIT_MARKET`` orders handle those at higher fidelity.
+        """
+        ecfg = self.exit_cfg
+
+        # --- Trailing stop (peak updated per-tick) ---
+        if ecfg.trailing_stop_pct is not None:
+            pos.update_peak(tick_price)
+            if pos.peak_pnl > 0:
+                current_pnl = pos.unrealized_pnl(tick_price)
+                notional = pos.entry * pos.qty
+                if notional > 0:
+                    peak_pct = pos.peak_pnl / notional
+                    curr_pct = current_pnl / notional
+                    drawdown = peak_pct - curr_pct
+                    leverage = self.sizing_cfg.leverage if self.sizing_cfg.leverage > 0 else 1
+                    trail_pct = ecfg.trailing_stop_pct / leverage
+                    if drawdown >= trail_pct:
+                        return "TRAILING"
+
+        # --- USD-target exits (the exchange has no equivalent) ---
+        tp_usd = getattr(ecfg, "take_profit_usd", None)
+        sl_usd = getattr(ecfg, "stop_loss_usd", None)
+        if tp_usd or sl_usd:
+            pnl = pos.unrealized_pnl(tick_price)
+            if tp_usd and pnl >= tp_usd:
+                return "TP_USD"
+            if sl_usd and pnl <= -sl_usd:
+                return "SL_USD"
+
+        # --- Wall-clock max-holding ---
+        max_hold_s = getattr(ecfg, "max_holding_seconds", None)
+        if max_hold_s and (now - pos.open_ts) >= max_hold_s:
+            return "MAX_HOLD_S"
+
+        return None
 
     async def _cancel_position_orders(self, pos: Position):
         """Cancel SL and TP orders by their tracked IDs only."""
@@ -602,12 +1067,20 @@ class LiveSupervisor:
     """
 
     def __init__(self, broker: IBroker, persist_path: str = "logs/live_positions.json",
-                 max_global_positions: int = 2):
+                 max_global_positions: int = 2,
+                 liq_guard_cfg: Optional[Any] = None,
+                 execution_cfg: Optional[Any] = None,
+                 book_streamer: Optional[Any] = None):
         self.broker = broker
         self._managers: Dict[str, PositionManager] = {}
         self.history: List[Position] = []
         self._store = PositionStore(path=persist_path)
         self._max_global_positions = max_global_positions
+        # Forwarded to every PositionManager registered below.
+        self.liq_guard_cfg = liq_guard_cfg
+        # Phase B1 — shared execution policy + bookTicker streamer
+        self.execution_cfg = execution_cfg
+        self.book_streamer = book_streamer
 
     def register_symbol(
         self,
@@ -624,6 +1097,9 @@ class LiveSupervisor:
                 exit_cfg=exit_cfg,
                 max_concurrent=max_concurrent,
                 symbol=symbol,
+                liq_guard_cfg=self.liq_guard_cfg,
+                execution_cfg=self.execution_cfg,
+                book_streamer=self.book_streamer,
             )
             self._managers[symbol] = pm
 
@@ -643,6 +1119,127 @@ class LiveSupervisor:
         if pm is None:
             return 0.0
         return pm.position_qty(symbol)
+
+    def position_qty_for(self, symbol: str, strategy_name: str) -> float:
+        """Per-(symbol, strategy_name) signed qty.  Composite slots
+        share a symbol's PositionManager but live in distinct buckets;
+        the order-level dispatch in LiveEngine reads each slot's qty
+        through this accessor so a sibling slot's open trade does not
+        masquerade as our own."""
+        pm = self._managers.get(symbol)
+        if pm is None:
+            return 0.0
+        return pm.position_qty_for(symbol, strategy_name)
+
+    # ------------------------------------------------------------------
+    # Periodic drift detection (real-money safety net)
+    # ------------------------------------------------------------------
+    async def detect_drift(self, qty_tolerance: float = 1e-6) -> List[Dict[str, Any]]:
+        """Compare local intended-position quantity to the exchange.
+
+        Returns a list of drift records, one per drifted symbol::
+
+            {"symbol": "BTCUSDT",
+             "local_qty": 0.5, "exchange_qty": 0.0,
+             "abs_diff": 0.5, "kind": "ghost_local"}
+
+        ``kind`` values:
+            * ``ghost_local``    — local has position, exchange flat
+              (server-side SL/TP fired and we didn't notice; rare with
+              the periodic ``_EXCHANGE_CHECK_INTERVAL`` poll, but the
+              drift loop closes the loophole during quiet bars).
+            * ``orphan_exchange`` — exchange has position, local flat
+              (manual order, restart with stale state, etc.).
+            * ``size_mismatch``  — both sides hold position but qty
+              differs (partial fill, missed leg, ADL).
+            * ``side_mismatch``  — both hold but signs disagree
+              (catastrophic — manual reversal or broker bug).
+        """
+        drifts: List[Dict[str, Any]] = []
+        for symbol, pm in self._managers.items():
+            try:
+                exchange_amt = await self.broker.position_amt(symbol)
+            except Exception as e:
+                log.warning("%s drift check failed: %s", symbol, e)
+                continue
+
+            local_qty = self._signed_local_qty(pm, symbol)
+            diff = exchange_amt - local_qty
+            if abs(diff) <= qty_tolerance:
+                continue
+
+            kind = self._classify_drift(local_qty, exchange_amt, qty_tolerance)
+            drifts.append({
+                "symbol": symbol,
+                "local_qty": local_qty,
+                "exchange_qty": exchange_amt,
+                "abs_diff": abs(diff),
+                "kind": kind,
+            })
+        return drifts
+
+    @staticmethod
+    def _signed_local_qty(pm: "PositionManager", symbol: str) -> float:
+        """Sum the symbol's open positions as a signed quantity.
+
+        Long → positive; short → negative.  Multiple slot-strategies on
+        the same symbol are summed (which matches what the exchange
+        sees — a single net position per symbol)."""
+        total = 0.0
+        for (sym, _strategy), pos in pm.open_positions.items():
+            if sym != symbol or pos.closed:
+                continue
+            sign = 1.0 if pos.is_long else -1.0
+            total += sign * pos.qty
+        return total
+
+    @staticmethod
+    def _classify_drift(
+        local_qty: float, exchange_qty: float, tol: float,
+    ) -> str:
+        local_zero = abs(local_qty) <= tol
+        exch_zero = abs(exchange_qty) <= tol
+        if local_zero and not exch_zero:
+            return "orphan_exchange"
+        if exch_zero and not local_zero:
+            return "ghost_local"
+        # Both nonzero — sign or size mismatch
+        if (local_qty > 0) != (exchange_qty > 0):
+            return "side_mismatch"
+        return "size_mismatch"
+
+    async def on_tick(self, symbol: str, tick_price: float, ts_ms: int = 0) -> None:
+        """Forward a mark-price tick to the symbol's PositionManager.
+
+        Wired by ``LiveEngine`` to ``MarkPriceTickStreamer`` so trailing
+        stops, USD-target exits, and time-based exits run intra-bar
+        instead of waiting for the next bar close.  Server-side
+        ``STOP_MARKET``/``TAKE_PROFIT_MARKET`` orders still cover
+        plain TP/SL — see ``PositionManager.check_tick_exits``.
+
+        Order of operations on every tick:
+
+        1. **Liquidation guard** runs FIRST — emergency pre-emptive
+           close beats every other rule because the alternative is the
+           exchange's auto-liquidation engine.
+        2. **Missing-stop guard** — any position without a server-side
+           SL is forcibly closed before we check anything else.  If
+           the stop disappeared (manual cancel, glitch) we are naked
+           and must flatten.
+        3. Local exit rules (trailing / USD targets / time-based).
+
+        All three run in sequence so a single tick can pre-empt liq,
+        prune missing-stop positions, *and* fire normal exits.
+        Persistence fires once if anything closed.
+        """
+        pm = self._managers.get(symbol)
+        if pm is None:
+            return
+        liq_closed = await pm.check_liquidation_warning(symbol, tick_price)
+        miss_closed = await pm.check_missing_stop(symbol, tick_price)
+        tick_closed = await pm.check_tick_exits(symbol, tick_price)
+        if liq_closed or miss_closed or tick_closed:
+            self._persist()
 
     def _persist(self):
         """Save all open positions to disk."""

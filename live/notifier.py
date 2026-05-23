@@ -132,6 +132,36 @@ class TelegramNotifier:
             f"Max DD: {stats.get('max_drawdown_pct', 0):.2f}%"
         )
 
+    # ── Phase E2 — extended safety event coverage ─────────────────────
+    async def notify_drift(self, symbol: str, kind: str, abs_diff: float):
+        return await self.send(
+            f"⚠️ <b>Position drift</b> {symbol} ({kind}) Δ{abs_diff:.4f}"
+        )
+
+    async def notify_missing_stop(self, symbol: str, strategy: str = ""):
+        return await self.send(
+            f"🚨 <b>Missing stop</b> {symbol} {strategy} — position closed"
+        )
+
+    async def notify_rejection_storm(self, reason: str, count: int = 0):
+        return await self.send(
+            f"🚨 <b>Rejection storm</b> ({count}) — {reason}"
+        )
+
+    async def notify_daily_loss_breach(self, daily_pnl: float, threshold: float):
+        return await self.send(
+            f"🚨 <b>Daily loss limit</b> hit: ${daily_pnl:.2f} ≥ ${threshold:.2f}"
+        )
+
+    async def notify_heartbeat_lost(self, seconds_stale: float):
+        return await self.send(
+            f"⚠️ <b>Feed stale</b> {seconds_stale:.0f}s — entries blocked"
+        )
+
+    async def notify_blocked(self, reason: str):
+        """Generic 'entry blocked' alert (spread / min_notional / cooldown)."""
+        return await self.send(f"⛔ <b>Entry blocked</b> — {reason}")
+
 if __name__ == "__main__":
     # Quick test
     notifier = TelegramNotifier()

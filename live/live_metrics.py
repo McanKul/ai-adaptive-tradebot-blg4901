@@ -32,6 +32,15 @@ _CSV_HEADER = [
     "timestamp", "symbol", "side", "entry_price", "exit_price",
     "qty", "pnl_usd", "pnl_pct", "bars_held", "hold_seconds",
     "exit_type", "strategy",
+    # Phase B2 — execution-quality columns.  Empty string when the
+    # broker did not report a fill price yet (Phase C1 lands those).
+    "intended_price", "fill_price", "slippage_bps",
+    # Phase B4 — fee / funding accounting.  Populated whenever the
+    # broker has reported commissions / funding payments for this
+    # position; otherwise zero.  ``pnl_net_usd = pnl_usd - fees -
+    # funding`` so downstream analysis sees the real after-cost number.
+    "entry_fee_usd", "exit_fee_usd", "funding_usd",
+    "pnl_gross_usd", "pnl_net_usd",
 ]
 
 
@@ -51,6 +60,12 @@ class _RunningStats:
     max_drawdown_pct: float = 0.0
     # per-symbol tracking
     symbol_pnl: Dict[str, float] = field(default_factory=dict)
+    # Phase B4 — execution-cost aggregation
+    total_fees: float = 0.0
+    total_funding: float = 0.0
+    total_pnl_net: float = 0.0
+    total_slippage_bps_abs: float = 0.0
+    slippage_count: int = 0
 
 
 class LiveMetrics:
@@ -107,6 +122,18 @@ class LiveMetrics:
 
         hold_seconds = (pos.exit_ts - pos.open_ts) if pos.exit_ts else 0.0
 
+        # Phase B2: surface execution-quality fields when populated
+        intended = getattr(pos, "intended_price", None) or pos.entry
+        fill = getattr(pos, "fill_price", None)
+        slip_bps = getattr(pos, "slippage_bps", None)
+
+        # Phase B4: fee / funding accounting (broker-supplied)
+        entry_fee = float(getattr(pos, "entry_fee_usd", 0.0) or 0.0)
+        exit_fee = float(getattr(pos, "exit_fee_usd", 0.0) or 0.0)
+        funding = float(getattr(pos, "funding_usd", 0.0) or 0.0)
+        pnl_gross = pnl_usd
+        pnl_net = pnl_gross - entry_fee - exit_fee - funding
+
         # Append to CSV
         row = [
             time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -121,6 +148,14 @@ class LiveMetrics:
             f"{hold_seconds:.1f}",
             pos.exit_type or "UNKNOWN",
             pos.strategy or "",
+            f"{intended:.8f}" if intended is not None else "",
+            f"{fill:.8f}" if fill is not None else "",
+            f"{slip_bps:.4f}" if slip_bps is not None else "",
+            f"{entry_fee:.4f}",
+            f"{exit_fee:.4f}",
+            f"{funding:.4f}",
+            f"{pnl_gross:.4f}",
+            f"{pnl_net:.4f}",
         ]
         try:
             with open(self._csv_path, "a", newline="", encoding="utf-8") as f:
@@ -143,6 +178,14 @@ class LiveMetrics:
 
         s.best_trade_pnl = max(s.best_trade_pnl, pnl_usd)
         s.worst_trade_pnl = min(s.worst_trade_pnl, pnl_usd)
+
+        # Phase B4 — execution-cost aggregation
+        s.total_fees += entry_fee + exit_fee
+        s.total_funding += funding
+        s.total_pnl_net += pnl_net
+        if slip_bps is not None:
+            s.total_slippage_bps_abs += abs(float(slip_bps))
+            s.slippage_count += 1
 
         # Per-symbol P&L
         s.symbol_pnl[pos.symbol] = s.symbol_pnl.get(pos.symbol, 0.0) + pnl_usd
@@ -183,13 +226,17 @@ class LiveMetrics:
         win_rate = (s.winning_trades / s.total_trades * 100) if s.total_trades > 0 else 0
         avg_pnl = s.total_pnl / s.total_trades if s.total_trades > 0 else 0
         avg_hold = s.total_hold_seconds / s.total_trades if s.total_trades > 0 else 0
+        avg_slip = (s.total_slippage_bps_abs / s.slippage_count
+                    if s.slippage_count > 0 else 0.0)
 
         log.info(
             "SESSION STATS | trades=%d | win_rate=%.1f%% | "
-            "total_pnl=$%.2f | avg_pnl=$%.4f | avg_hold=%.0fs | "
+            "gross=$%.2f | net=$%.2f | fees=$%.2f | funding=$%.2f | "
+            "avg_pnl=$%.4f | avg_slip=%.1fbps | avg_hold=%.0fs | "
             "best=$%.4f | worst=$%.4f | max_dd=%.2f%%",
             s.total_trades, win_rate,
-            s.total_pnl, avg_pnl, avg_hold,
+            s.total_pnl, s.total_pnl_net, s.total_fees, s.total_funding,
+            avg_pnl, avg_slip, avg_hold,
             s.best_trade_pnl, s.worst_trade_pnl, s.max_drawdown_pct,
         )
 
