@@ -31,7 +31,7 @@ from Backtest.scoring.scorer import Scorer
 from Backtest.scoring.search_space import ParameterGrid, SearchSpace
 from Backtest.scoring.selector import Selector, SelectionCriteria
 from Interfaces.metrics_interface import BacktestResult
-from Interfaces.strategy_adapter import IBacktestStrategy
+from Interfaces.strategy_adapter import IBacktestStrategy, SizingConfig, SizingMode
 from core.factories.strategy_factory import StrategyFactory
 
 log = logging.getLogger(__name__)
@@ -110,6 +110,10 @@ class SweepService:
         cv_n_test_splits: int = 2,
         cv_aggregate: str = "mean",
         cv_expanding: bool = False,
+        # NEW: hyperband (successive halving)
+        cv_hyperband: bool = False,
+        cv_halving_factor: int = 2,
+        cv_min_active: int = 2,
         # NEW: realism
         realism_config_path: Optional[str] = None,
         # NEW: SearchSpace constraints (list of dicts; see _build_search_space)
@@ -157,6 +161,16 @@ class SweepService:
             RealismConfig.from_yaml(realism_config_path)
             if realism_config_path else RealismConfig()
         )
+        # Sizing must flow through so CV folds compute actual qty.  Without
+        # this, the engine keeps the strategy's qty=1.0 placeholder and
+        # max_position_notional silently rejects every order on high-price
+        # symbols (BTC at $70k × 1.0 = $70k > 50k limit → 0 trades).
+        sizing = SizingConfig(
+            mode=SizingMode.MARGIN_USD,
+            margin_usd=float(margin_usd),
+            leverage=float(leverage),
+            leverage_mode="margin",
+        )
         bt_cfg = BacktestConfig(
             data=data_cfg,
             initial_capital=capital,
@@ -178,6 +192,7 @@ class SweepService:
             tp_pct=tp_pct,
             sl_pct=sl_pct,
             realism=realism,
+            sizing=sizing,
         )
 
         # 3) Strategy factory closure (BatchBacktest expects it)
@@ -197,6 +212,26 @@ class SweepService:
         t0 = time.time()
         if cv_method == "none":
             batch_result = batch.run(space)
+        elif cv_hyperband:
+            if cv_method == "cpcv":
+                raise ValueError(
+                    "cv_hyperband is incompatible with cv_method='cpcv'. "
+                    "Use 'walk_forward' or 'purged_kfold'."
+                )
+            log.info(
+                "Hyperband enabled: halving_factor=%d, min_active=%d",
+                cv_halving_factor, cv_min_active,
+            )
+            batch_result = batch.run_with_cv_hyperband(
+                param_space=space,
+                split_mode=cv_method,
+                n_splits=cv_n_splits,
+                embargo_pct=cv_embargo_pct,
+                train_pct=cv_train_pct,
+                aggregate=cv_aggregate,
+                halving_factor=cv_halving_factor,
+                min_active=cv_min_active,
+            )
         else:
             batch_result = batch.run_with_cv(
                 param_space=space,
@@ -219,25 +254,44 @@ class SweepService:
             max_cv_std=max_cv_std if max_cv_std is not None else float("inf"),
         )
         selector = Selector(criteria)
-        # apply_filters=False when no filter knobs were set, so we still
-        # show the full ranking
+        # Always rank ALL combos for the CSV — filters only narrow the
+        # printed top-N.  Earlier behaviour silently dropped the CSV when
+        # every combo failed a filter (e.g. all kombolar 30 trade altında),
+        # which left the user with nothing to inspect.
         any_filter = any(v is not None for v in
                          [min_trades, min_sharpe, max_drawdown, min_win_rate, max_cv_std])
-        ranked = selector.select_top_k(
-            batch_result, k=len(batch_result.results), apply_filters=any_filter,
+        unfiltered = selector.select_top_k(
+            batch_result, k=len(batch_result.results), apply_filters=False,
         )
+        if any_filter:
+            filtered = selector.select_top_k(
+                batch_result, k=len(batch_result.results), apply_filters=True,
+            )
+        else:
+            filtered = unfiltered
 
         # Reshape to (params, result, score) for backwards compatibility
-        results: List[RankedResult] = [(p, r, s) for r, s, p in ranked]
+        all_results: List[RankedResult] = [(p, r, s) for r, s, p in unfiltered]
+        results: List[RankedResult] = [(p, r, s) for r, s, p in filtered]
 
-        # 6) CSV export + print
+        # 6) CSV export — always write the full ranking so failed-filter
+        # runs leave a debuggable trail.
         if csv_output:
-            self._write_csv(csv_output, results, cv_method=cv_method)
-            log.info("Results saved to %s", csv_output)
+            self._write_csv(csv_output, all_results, cv_method=cv_method)
+            log.info(
+                "Results saved to %s (%d combos, %d passed filters)",
+                csv_output, len(all_results), len(results),
+            )
 
         self.print_top_results(results, top_n=top_n, cv_method=cv_method)
         if results:
             self._print_best(results[0], cv_method=cv_method)
+        elif all_results:
+            log.warning(
+                "All %d combos were filtered out — printing best-of-unfiltered "
+                "for inspection:", len(all_results),
+            )
+            self._print_best(all_results[0], cv_method=cv_method)
 
         # Selection-bias warning
         if batch_result.selection_bias_report:

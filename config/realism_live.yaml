@@ -1,0 +1,61 @@
+# =====================================================================
+# config/realism_live.yaml
+# =====================================================================
+# Live-mirror realism config used by every backtest from sweep through
+# final validation.  Goal: make the backtest engine behave as close to
+# the production execution path as practical.
+#
+#   slippage   = volume-impact + multiplicative-lognormal noise
+#   spread     = OHLC bar-derived (Roll/Beckers estimator)
+#   latency    = gamma(shape=2, scale=10ms) + price-aware fill
+#   funding    = 8h Binance perpetual (0.01% / interval)
+#   borrow     = 10% annualised
+#   partial    = liquidity-ratio fills with 10% minimum-fill floor
+#
+# Loaded via:  python app.py backtest --realism-config config/realism_live.yaml
+# =====================================================================
+
+transaction_costs:
+  fee_model: "fixed"
+  maker_fee_bps: 2.0
+  taker_fee_bps: 4.0
+
+  # Slippage: market-impact ∝ √(qty/volume) × impact_factor, plus lognormal noise
+  slippage_model: "volume_sqrt"
+  impact_factor: 0.1
+  max_slippage_bps: 50.0
+  liquidity_scale: 1.0
+  slippage_noise: "multiplicative_lognormal"
+  slippage_noise_sigma: 0.3
+
+  # Spread estimated from each bar's OHLC (more realistic than fixed bps)
+  spread_model: "ohlc_estimator"
+  spread_bps: 2.0   # fallback when estimator returns NaN
+
+  # Latency: gamma-distributed with price-aware fill (limit/market re-priced
+  # at the bar reached after latency).
+  latency_model: "distribution"
+  latency_distribution: "gamma"
+  latency_gamma_shape: 2.0
+  latency_gamma_scale_ns: 10000000   # 10ms scale → mean ≈ 20ms, fat right tail
+  price_latency_mode: "price_aware"
+  price_latency_bar_field: "open"
+
+  marketable_limit_is_taker: true
+  seed: 42
+
+funding:
+  enabled: true
+  funding_interval_hours: 8
+  funding_rate_mode: "constant"
+  funding_rate: 0.0001              # 0.01% per 8h interval (Binance default)
+
+borrow:
+  enabled: true
+  annual_borrow_rate: 0.10          # 10% annualised
+  charge_interval: "bar"
+
+partial_fills:
+  enabled: true
+  liquidity_scale: 10.0             # fill_ratio = bar.volume / (qty * 10)
+  min_fill_ratio: 0.1               # below 10% fill, order is rejected

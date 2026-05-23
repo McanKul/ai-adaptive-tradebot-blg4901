@@ -1,0 +1,68 @@
+# =====================================================================
+# config/composite_emacross_regime.yaml
+# =====================================================================
+# EMACrossMACDTrend gated by ADX + ATR-percentile regime detectors.
+# Only fires when the market is BOTH trending (ADX) and in a meaningful
+# volatility band — keeps the strategy out of choppy / dead tape.
+#
+# Slot regimes use OR semantics in regime_gate policy: the slot fires
+# when any tag in `regimes` overlaps the merged detector tags.  Listing
+# trend_up/trend_down covers both directional trends; vol_high keeps it
+# active when ATR is in the top 30% percentile.
+# =====================================================================
+
+name: emacross_regime_gated_v1
+policy: regime_gate
+
+default_sizing:
+  mode: margin_usd
+  margin_usd: 10
+  leverage: 10
+  leverage_mode: margin
+
+regime:
+  - type: ADXRegimeDetector
+    params:
+      period: 14
+      trend_threshold: 25.0
+      di_gap: 5.0
+  - type: ATRPercentileRegime
+    params:
+      atr_period: 14
+      window: 200
+      hi_pct: 0.7
+      lo_pct: 0.3
+
+slots:
+  - id: emacross_main
+    strategy: EMACrossMACDTrend
+    # Best params from the previous AVAX sweep (#3).  These were chosen
+    # under the ATR-bar-close bug, so they may shift after the re-sweep
+    # below — for now treat this composite as an A/B against the naked
+    # EMACross baseline using identical params.
+    params:
+      fast_ema_period: 8
+      slow_ema_period: 21
+      macd_signal: 9
+      atr_period: 14
+      atr_mult: 2.0
+      adx_period: 14
+      adx_threshold: 25.0
+      volume_filter: true
+      volume_period: 20
+      risk_pct: 0.005
+      allow_reversal: false
+      exit_on_macd_cross: true
+      rsi_period: 14
+      rsi_overbought: 75.0
+      rsi_oversold: 25.0
+      use_rsi_filter: true
+      use_ema_slope: true
+      min_histogram_pct: 0.0
+      max_holding_bars: 96   # 24h on 15m timeframe — matches live config intent
+    regimes: [trend_up, trend_down, vol_high]
+    sizing:
+      mode: margin_usd
+      margin_usd: 10
+      leverage: 10
+      leverage_mode: margin

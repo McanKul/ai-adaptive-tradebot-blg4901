@@ -1,0 +1,35 @@
+# =====================================================================
+# config/grid_emacross_v2.yaml
+# =====================================================================
+# EMACross sweep grid v2 — adds three knobs that emerged from analysis:
+#   - max_holding_bars: time stop (was missing from v1; live config uses 96)
+#   - min_histogram_pct: whipsaw filter (v1 fixed at 0)
+#   - adx_threshold: tightened range (v1 had {20, 25}, now {25, 30, 35})
+#
+# Compared to v1: 36 → ~108 combos (constraint sonrasi). Hyperband
+# halving cuts that to ~110 evals at 4 rungs.  ~5-6 hours on AVAX 1y.
+# =====================================================================
+
+grid:
+  fast_ema_period: [8, 12, 16]
+  slow_ema_period: [21, 26]
+  atr_mult: [2.0, 2.5, 3.0]
+  adx_threshold: [25.0, 30.0, 35.0]
+  max_holding_bars: [null, 96]          # null = no time stop, 96 = 24h
+  min_histogram_pct: [0.0, 0.10]        # whipsaw filter; 0.10 ≈ 10% of ATR
+  macd_signal: [9]
+  atr_period: [14]
+  adx_period: [14]
+  volume_filter: [true]
+  volume_period: [20]
+  risk_pct: [0.005]
+  allow_reversal: [false]
+  exit_on_macd_cross: [true]
+  rsi_period: [14]
+  rsi_overbought: [75.0]
+  rsi_oversold: [25.0]
+  use_rsi_filter: [true]
+  use_ema_slope: [true]
+
+constraints:
+  - {type: less_than, a: fast_ema_period, b: slow_ema_period}

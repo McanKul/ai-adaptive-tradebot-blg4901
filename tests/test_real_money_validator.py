@@ -177,6 +177,46 @@ class TestRealMoneyValidator(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_symbol_route_leverage_above_risk_cap_blocks(self):
+        # Append a symbol_routes block that pushes one symbol above the
+        # account-level risk.max_leverage tavan.
+        bad = _CANARY_CLEAN + (
+            "risk:\n"
+            "  max_concurrent_positions: 1\n"
+            "  max_daily_loss: 30\n"
+            "  max_daily_loss_pct: 0.02\n"
+            "  max_leverage: 5\n"
+            "symbol_routes:\n"
+            "  - symbol: BTCUSDT\n"
+            "    leverage: 10\n"
+        )
+        path = _write_yaml(bad)
+        try:
+            errors = ConfigValidator().validate(path, real_money=True)
+            self.assertTrue(
+                any("BTCUSDT" in e and "max_leverage" in e for e in errors),
+                msg=f"expected per-symbol leverage error; got: {errors}",
+            )
+        finally:
+            os.unlink(path)
+
+    def test_spread_filter_disabled_blocks(self):
+        # execution.max_entry_spread_bps=0 disables the spread filter,
+        # which means a book-streamer outage cannot default-deny.
+        bad = _CANARY_CLEAN + (
+            "execution:\n"
+            "  max_entry_spread_bps: 0\n"
+        )
+        path = _write_yaml(bad)
+        try:
+            errors = ConfigValidator().validate(path, real_money=True)
+            self.assertTrue(
+                any("max_entry_spread_bps" in e for e in errors),
+                msg=f"expected spread-filter error; got: {errors}",
+            )
+        finally:
+            os.unlink(path)
+
     def test_basic_mode_skips_real_money_checks(self):
         # Same bad config — basic mode should NOT flag the real-money rules
         bad = _CANARY_CLEAN.replace("leverage: 3", "leverage: 15")

@@ -30,6 +30,7 @@ def register_defaults() -> None:
     StrategyFactory.register("RSIThreshold", "Strategy.RSIThreshold")
     StrategyFactory.register("EMACrossMACDTrend", "Strategy.EMACrossMACDTrend")
     StrategyFactory.register("DonchianATRVolTarget", "Strategy.DonchianATRVolTarget")
+    StrategyFactory.register("ICTLiquiditySweepFVG", "Strategy.ICTLiquiditySweepFVG")
     # Arbitrage strategies (Phase 3, backtest-only for v1)
     StrategyFactory.register(
         "FundingRateArbStrategy",

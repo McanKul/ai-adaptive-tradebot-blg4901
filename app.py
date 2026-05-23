@@ -267,13 +267,192 @@ def _add_live_parser(subparsers):
                    help="Tag log/state files with this id (default: config.name)")
     p.add_argument("--sentiment", choices=["on", "off"], default=None,
                    help="Force sentiment on/off regardless of YAML")
+    p.add_argument("--force-live", action="store_true",
+                   help="Bypass the promotion-gate stamp check.  Dangerous: "
+                        "use only when the gate has been verified manually "
+                        "out-of-band.")
+    p.add_argument("--max-stamp-age-days", type=float, default=7.0,
+                   help="Reject promotion-gate stamps older than this many "
+                        "days (default 7).  A long-stale stamp likely means "
+                        "the gate was passed against a different code or "
+                        "data state.")
     p.set_defaults(func=_cmd_live)
+
+
+def _check_promotion_stamp(
+    config_path: str,
+    run_id: str | None,
+    *,
+    expected_strategy: str | None = None,
+    max_age_days: float = 7.0,
+) -> str:
+    """Resolve the promotion-gate stamp path and validate its contents.
+
+    Exits with code 2 on any failure with a precise reason so the
+    operator knows whether to re-promote or rebuild.
+
+    Checks:
+      1. Stamp file exists at ``logs/promotion_gate_<run_id>.json``
+         (or the config basename when ``--run-id`` is omitted).
+      2. Stamp parses as JSON.
+      3. ``config`` field's basename matches the ``--config`` basename
+         (path-relative invocations on the same canary YAML pass).
+      4. ``passed_at_utc`` is within ``max_age_days`` from now.
+      5. ``strategy`` matches ``expected_strategy`` when provided
+         (i.e. the strategy_class loaded from the config).
+      6. ``config_sha256`` matches the hash of the live config bytes
+         (defends against content edits with the same file name).
+         Stamps written by an older release without this field emit a
+         warning instead of failing — a one-release transition window.
+
+    Returns the resolved stamp path on success.
+    """
+    import hashlib
+    import json
+    from datetime import datetime, timezone, timedelta
+    from pathlib import Path
+
+    effective = run_id or Path(config_path).stem
+    stamp_path = os.path.join("logs", f"promotion_gate_{effective}.json")
+
+    if not os.path.exists(stamp_path):
+        print(
+            f"ERROR: Promotion gate stamp not found at {stamp_path}.\n"
+            f"  Run tools/promote_to_live.py first or pass --force-live "
+            f"to bypass intentionally."
+        )
+        sys.exit(2)
+
+    try:
+        with open(stamp_path, "r", encoding="utf-8") as f:
+            stamp = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"ERROR: Promotion gate stamp at {stamp_path} is unreadable: {e}")
+        sys.exit(2)
+
+    # 3) config basename match — tolerant to path-relative invocation.
+    stamp_cfg = stamp.get("config", "")
+    if Path(stamp_cfg).name != Path(config_path).name:
+        print(
+            f"ERROR: Stamp at {stamp_path} was issued for config "
+            f"'{stamp_cfg}', but live was invoked with '{config_path}'.\n"
+            f"  Re-run tools/promote_to_live.py against the current "
+            f"config or pass --force-live to bypass intentionally."
+        )
+        sys.exit(2)
+
+    # 4) freshness window.
+    raw_ts = stamp.get("passed_at_utc")
+    if not isinstance(raw_ts, str):
+        print(f"ERROR: Stamp at {stamp_path} has no passed_at_utc timestamp.")
+        sys.exit(2)
+    try:
+        ts = datetime.fromisoformat(raw_ts)
+    except ValueError as e:
+        print(f"ERROR: Stamp at {stamp_path} has malformed passed_at_utc "
+              f"({raw_ts!r}): {e}")
+        sys.exit(2)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - ts
+    if age > timedelta(days=max_age_days):
+        print(
+            f"ERROR: Promotion gate stamp at {stamp_path} is "
+            f"{age.days} days old (max {max_age_days:.1f}).\n"
+            f"  Re-run tools/promote_to_live.py or pass --force-live "
+            f"to bypass intentionally."
+        )
+        sys.exit(2)
+
+    # 5) strategy match.
+    if expected_strategy is not None:
+        stamp_strategy = stamp.get("strategy")
+        if stamp_strategy != expected_strategy:
+            print(
+                f"ERROR: Stamp at {stamp_path} cleared "
+                f"strategy='{stamp_strategy}', but config requests "
+                f"strategy='{expected_strategy}'.\n"
+                f"  Re-run tools/promote_to_live.py against the current "
+                f"strategy or pass --force-live to bypass intentionally."
+            )
+            sys.exit(2)
+
+    # 6) config content hash.  Basename match (step 3) catches renames;
+    # this catches in-place content edits that keep the same filename.
+    stamp_hash = stamp.get("config_sha256")
+    if stamp_hash is None:
+        print(
+            f"WARNING: Stamp at {stamp_path} has no config_sha256 (legacy "
+            f"stamp). Re-run tools/promote_to_live.py to get a hashed "
+            f"stamp; this fallback will be removed in a future release."
+        )
+    else:
+        h = hashlib.sha256()
+        try:
+            with open(config_path, "rb") as f:
+                for chunk in iter(lambda: f.read(65536), b""):
+                    h.update(chunk)
+        except OSError as e:
+            print(f"ERROR: cannot hash config {config_path}: {e}")
+            sys.exit(2)
+        live_hash = h.hexdigest()
+        if live_hash != stamp_hash:
+            print(
+                f"ERROR: Stamp at {stamp_path} was issued against config "
+                f"sha256={stamp_hash[:12]}…, but current "
+                f"'{config_path}' hashes to {live_hash[:12]}….\n"
+                f"  The config has been edited since the gate passed. "
+                f"Re-run tools/promote_to_live.py or pass --force-live "
+                f"to bypass intentionally."
+            )
+            sys.exit(2)
+
+    return stamp_path
 
 
 def _cmd_live(args):
     if not os.path.exists(args.config):
         print(f"Config file not found: {args.config}")
         sys.exit(1)
+
+    if args.force_live:
+        print("WARNING: --force-live set — promotion gate bypassed. "
+              "Real money at risk.")
+    else:
+        # Run real-money strict validation up front. The validate
+        # subcommand exposes the same checks, but live trading must not
+        # depend on the operator remembering to run it first.
+        from core.config_validator import ConfigValidator
+        rm_errors = ConfigValidator().validate(args.config, real_money=True)
+        if rm_errors:
+            print(
+                f"\nREAL-MONEY config validation FAILED "
+                f"({len(rm_errors)} error(s)):\n"
+            )
+            for i, e in enumerate(rm_errors, 1):
+                print(f"  {i}. {e}")
+            print(
+                "\nFix the above before launching live, or pass --force-live "
+                "to bypass intentionally."
+            )
+            sys.exit(2)
+
+        # Pre-parse the config so the stamp's strategy field can be
+        # checked against what live is actually about to run.  Cheap —
+        # YAML parse is sub-millisecond — and prevents the "stamped
+        # against EMACross, launched RSIThreshold" foot-gun.
+        from live.live_config import LiveConfig
+        if args.config.endswith(".json"):
+            cfg_for_validation = LiveConfig.from_json(args.config)
+        else:
+            cfg_for_validation = LiveConfig.from_yaml(args.config)
+        stamp = _check_promotion_stamp(
+            args.config,
+            args.run_id,
+            expected_strategy=cfg_for_validation.strategy_class,
+            max_age_days=args.max_stamp_age_days,
+        )
+        print(f"Promotion gate stamp verified: {stamp}")
 
     from core.services.live_service import LiveService
     svc = LiveService()
@@ -353,6 +532,17 @@ def _add_sweep_parser(subparsers):
     p.add_argument("--cv-aggregate", default="mean", choices=["mean", "median", "min"])
     p.add_argument("--cv-expanding", action="store_true")
 
+    # Hyperband (successive halving) — drop bottom 1/halving_factor of params
+    # after each fold so bad combos don't keep burning compute through every
+    # rung.  Incompatible with cv_method='cpcv'.
+    p.add_argument("--cv-hyperband", action="store_true",
+                   help="Enable Hyperband-style successive halving across CV folds")
+    p.add_argument("--cv-halving-factor", type=int, default=2,
+                   help="Keep top 1/halving_factor of params after each rung "
+                        "(default 2 = keep top half)")
+    p.add_argument("--cv-min-active", type=int, default=2,
+                   help="Floor on active params at each rung (default 2)")
+
     # Selector — minimum-quality filters
     p.add_argument("--min-trades", type=int, default=None,
                    help="Drop combos with fewer than N trades")
@@ -397,6 +587,9 @@ def _cmd_sweep(args):
         cv_n_test_splits=args.cv_n_test_splits,
         cv_aggregate=args.cv_aggregate,
         cv_expanding=args.cv_expanding,
+        cv_hyperband=args.cv_hyperband,
+        cv_halving_factor=args.cv_halving_factor,
+        cv_min_active=args.cv_min_active,
         min_trades=args.min_trades,
         min_sharpe=args.min_sharpe,
         max_drawdown=args.max_dd,

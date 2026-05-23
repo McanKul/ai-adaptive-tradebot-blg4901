@@ -40,7 +40,10 @@ class BinanceClient(IClient):
 
     async def futures_klines(self, symbol: str, interval: str, limit: int) -> List[Any]:
         return await self._client.futures_klines(symbol=symbol, interval=interval, limit=limit)
-        
+
+    async def futures_ticker(self, symbol: str) -> Dict[str, Any]:
+        return await self._client.futures_ticker(symbol=symbol)
+
     async def close_connection(self):
         await self._client.close_connection()
 

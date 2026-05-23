@@ -170,11 +170,27 @@ class PositionManager:
     # Helpers
     # ------------------------------------------------------------------
     def position_qty(self, symbol: str) -> float:
-        """Return signed qty for a symbol (positive=long, negative=short)."""
+        """Return signed qty for a symbol (positive=long, negative=short).
+
+        With composite strategies the same symbol may host multiple
+        ``(symbol, strategy_name)`` buckets at once; this helper returns
+        the *first* open bucket's qty for backwards compatibility with
+        single-strategy callers.  Composite paths must use
+        :meth:`position_qty_for` to read a specific slot's qty."""
         for (sym, _), pos in self.open_positions.items():
             if sym == symbol and not pos.closed:
                 return pos.qty if pos.is_long else -pos.qty
         return 0.0
+
+    def position_qty_for(self, symbol: str, strategy_name: str) -> float:
+        """Return signed qty for a single ``(symbol, strategy_name)``
+        bucket, or 0.0 when no open position exists.  Composite live
+        execution uses this to read a specific slot's position without
+        being confused by sibling slots that share the same symbol."""
+        pos = self.open_positions.get((symbol, strategy_name))
+        if pos is None or pos.closed:
+            return 0.0
+        return pos.qty if pos.is_long else -pos.qty
 
     @staticmethod
     def _round_price(raw: float, tick: float, up: bool = False) -> float:
@@ -336,7 +352,18 @@ class PositionManager:
         # send orders into an opaque market).  Disabled by setting
         # ``max_entry_spread_bps`` to 0.
         max_spread = float(getattr(self.execution_cfg, "max_entry_spread_bps", 0.0) or 0.0)
-        if max_spread > 0 and self.book_streamer is not None:
+        if max_spread > 0:
+            if self.book_streamer is None:
+                # Earlier this branch silently bypassed the filter, which
+                # turned a book-streamer outage into "allow all" — the
+                # exact opposite of what max_entry_spread_bps was set
+                # for.  In real-money mode that's unacceptable; block.
+                log.warning(
+                    "%s [%s] entry blocked — book streamer unavailable; "
+                    "spread filter cannot evaluate",
+                    symbol, strategy_name,
+                )
+                return False
             spread_bps = self.book_streamer.get_spread_bps(symbol)
             if spread_bps is None:
                 log.warning("%s [%s] entry blocked — no bookTicker yet (spread filter on)",
@@ -1106,6 +1133,17 @@ class LiveSupervisor:
         if pm is None:
             return 0.0
         return pm.position_qty(symbol)
+
+    def position_qty_for(self, symbol: str, strategy_name: str) -> float:
+        """Per-(symbol, strategy_name) signed qty.  Composite slots
+        share a symbol's PositionManager but live in distinct buckets;
+        the order-level dispatch in LiveEngine reads each slot's qty
+        through this accessor so a sibling slot's open trade does not
+        masquerade as our own."""
+        pm = self._managers.get(symbol)
+        if pm is None:
+            return 0.0
+        return pm.position_qty_for(symbol, strategy_name)
 
     # ------------------------------------------------------------------
     # Periodic drift detection (real-money safety net)

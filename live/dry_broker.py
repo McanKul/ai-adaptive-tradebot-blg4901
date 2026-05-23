@@ -64,6 +64,12 @@ class _DryClient:
     async def futures_change_leverage(self, symbol: str, leverage: int):
         pass
 
+    async def futures_ticker(self, symbol: str):
+        # Dry-run admits any symbol; LiveEngine's volume gate inherits
+        # the IBroker default of +inf so this is only ever called when
+        # something explicitly probes the underlying client.
+        return {"symbol": symbol, "quoteVolume": "0"}
+
     async def close_connection(self):
         pass
 

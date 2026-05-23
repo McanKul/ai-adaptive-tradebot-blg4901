@@ -25,6 +25,33 @@ from utils.logger import setup_logger
 log = setup_logger("LiveService")
 
 
+def _validate_live_strategy_safety(cfg: LiveConfig, dry_run: bool) -> None:
+    """Refuse live mode for strategies whose live execution is not yet
+    safe.  Backtest and dry-run paths are exercised heavily so this guard
+    only fires when real money is on the line.
+
+    - FundingRateArbStrategy: documented as backtest-only; live needs
+      atomic spot+perp routing across two order books that BacktestEngine
+      itself does not yet provide (see the xfail in
+      ``tests/test_funding_arb_engine_integration.py``).
+
+    Note: CompositeStrategy was previously refused here because
+    LiveEngine collapsed ``decision.orders`` into a single position
+    signal.  As of the order-level dispatch refactor (see
+    ``live/live_engine.py:_orders_for_execution`` and friends) each
+    slot's order is submitted to the broker individually and tracked
+    against its own ``(symbol, slot.id)`` PositionManager bucket, so
+    composite live is now permitted.
+    """
+    if dry_run:
+        return
+    if cfg.strategy_class == "FundingRateArbStrategy":
+        raise RuntimeError(
+            "FundingRateArbStrategy is research/backtest-only. "
+            "Live spot+perp atomic execution is not implemented."
+        )
+
+
 class LiveService:
     """Run live or dry-run trading using factory-wired components."""
 
@@ -67,6 +94,11 @@ class LiveService:
             cfg.symbols, cfg.strategy_class,
             "on" if cfg.news.enabled else "off",
         )
+
+        # Default-deny: refuse to spin up live mode for strategies that
+        # have not been cleared for real-money execution.  Dry-run and
+        # backtest paths are unaffected.
+        _validate_live_strategy_safety(cfg, dry_run)
 
         # 2) Resolve strategy — composite spec takes precedence over class
         strategy_instance = None

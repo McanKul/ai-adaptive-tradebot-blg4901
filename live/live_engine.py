@@ -326,6 +326,155 @@ class LiveEngine:
 
         return multiplier
 
+    # ── Order-level dispatch helpers ───────────────────────────────────
+    # These fan out a `StrategyDecision.orders` list across the broker
+    # one order at a time, preserving each order's `strategy_id` so a
+    # CompositeStrategy with multiple slots gets per-slot position
+    # tracking.  Single-strategy paths fall back to `cfg.name` so the
+    # existing `logs/live_*_<run_id>.json` state files keep working.
+
+    @staticmethod
+    def _orders_for_execution(decision) -> list:
+        """Return decision.orders sorted so reduce-only runs first.
+        Same-priority orders keep their emit order (FIFO) — matches
+        BacktestEngine's per-bar execution sequence."""
+        return sorted(
+            decision.orders,
+            key=lambda o: 0 if getattr(o, "reduce_only", False) else 1,
+        )
+
+    def _strategy_name_for_order(self, order) -> str:
+        """Pick the (symbol, strategy_name) bucket key for an order.
+
+        Composite path: each slot gets its own bucket, keyed by the
+        slot.id that CompositeStrategy stamped into ``order.strategy_id``.
+        Single-strategy path: cfg.name so existing state-file paths
+        remain stable across the rollout."""
+        if self.cfg.composite_spec:
+            sid = getattr(order, "strategy_id", None)
+            if sid:
+                return sid
+        return self.cfg.name
+
+    async def _handle_exit_order(
+        self, sym: str, order, strategy_name: str, decision,
+    ) -> None:
+        """Close the (sym, strategy_name) position iff one is open.
+        Idempotent — if there is nothing to close, log nothing and exit
+        quietly so a strategy that emits an exit on every flat bar does
+        not flood logs."""
+        if self.supervisor.position_qty_for(sym, strategy_name) == 0.0:
+            return
+        exit_reason = (decision.metadata or {}).get(
+            "exit_reason", "STRATEGY_EXIT",
+        )
+        log.info(
+            "[%s/%s] Strategy exit signal: %s",
+            sym, strategy_name, exit_reason,
+        )
+        await self.supervisor.close_position(
+            symbol=sym,
+            strategy_name=strategy_name,
+            exit_type=exit_reason,
+        )
+
+    async def _handle_entry_order(
+        self, sym: str, order, strategy_name: str, bar_dict, tf: str,
+        *, risk_block_entries: bool,
+    ) -> Optional[str]:
+        """Open a new position from an entry order.  Returns
+        ``"feed_stale"`` when the stale-feed gate triggers so the caller
+        can short-circuit the bar (legacy parity).  Returns None on a
+        quiet block (risk gate, no signal after sentiment)."""
+        if risk_block_entries:
+            return None
+        raw_sig = "+1" if order.side == OrderSide.BUY else "-1"
+        final_sig = await self._get_combined_signal(sym, raw_sig)
+        if not final_sig:
+            return None
+        if await self._feed_too_stale_for_entries(sym):
+            return "feed_stale"
+        leverage = self.cfg.leverage_for(sym)
+        log.info(
+            "[%s/%s] Opening position: direction=%+d (raw=%s, final=%s)",
+            sym, strategy_name, final_sig, raw_sig, final_sig,
+        )
+        opened = await self.supervisor.open_position(
+            symbol=sym,
+            side=final_sig,
+            strategy_name=strategy_name,
+            leverage=leverage,
+            timeframe=tf,
+        )
+        if opened:
+            actual_qty = abs(
+                self.supervisor.position_qty_for(sym, strategy_name)
+            )
+            await self.notifier.position_opened(
+                sym, "LONG" if final_sig > 0 else "SHORT",
+                actual_qty, float(bar_dict.get("c", 0)), leverage,
+            )
+        return None
+
+    async def _handle_legacy_signal(
+        self, sym: str, signal_value, bar_dict, tf: str,
+        *, risk_block_entries: bool,
+    ) -> Optional[str]:
+        """Backward-compat path for strategies that emit ``decision.signal``
+        instead of an order list.  Behaviour mirrors the pre-refactor
+        block under cfg.name."""
+        if not signal_value:
+            return None
+        final_sig = await self._get_combined_signal(sym, signal_value)
+        if not final_sig or risk_block_entries:
+            return None
+        if await self._feed_too_stale_for_entries(sym):
+            return "feed_stale"
+        leverage = self.cfg.leverage_for(sym)
+        log.info(
+            "[%s] Opening position: direction=%+d (legacy_signal=%s)",
+            sym, final_sig, signal_value,
+        )
+        opened = await self.supervisor.open_position(
+            symbol=sym,
+            side=final_sig,
+            strategy_name=self.cfg.name,
+            leverage=leverage,
+            timeframe=tf,
+        )
+        if opened:
+            actual_qty = abs(self.supervisor.position_qty(sym))
+            await self.notifier.position_opened(
+                sym, "LONG" if final_sig > 0 else "SHORT",
+                actual_qty, float(bar_dict.get("c", 0)), leverage,
+            )
+        return None
+
+    async def _feed_too_stale_for_entries(self, sym: str) -> bool:
+        """Phase E1 stale-feed gate.  Returns True (and notifies) when
+        the WS hasn't refreshed in ``execution.max_tick_age_seconds``.
+        Existing positions stay protected by their server-side SL/TP;
+        this gate only blocks NEW entries."""
+        max_age = float(getattr(
+            self.cfg.execution, "max_tick_age_seconds", 0.0,
+        ) or 0.0)
+        if max_age <= 0 or self.streamer is None:
+            return False
+        stale = self.streamer.seconds_since_last_message
+        if stale <= max_age:
+            return False
+        log.warning(
+            "[%s] entry blocked — feed stale %.1fs > %.1fs",
+            sym, stale, max_age,
+        )
+        try:
+            await self.notifier.kill_switch(
+                f"feed stale {stale:.0f}s — blocking entries"
+            )
+        except Exception:
+            pass
+        return True
+
     # ── Main Trading Loop ─────────────────────────────────────────────
 
     async def run(self):
@@ -582,87 +731,46 @@ class LiveEngine:
                               for k, v in (decision.features or {}).items()
                               if k in ("fast_ema", "slow_ema", "histogram", "adx", "atr")})
 
-                # Extract signal: from orders or from legacy signal field
-                strategy_sig = None
-                has_exit_signal = False
-                exit_reason = None
+                # ── Order-level execution dispatch ─────────────────────
+                # `decision.orders` is iterated end-to-end so each order
+                # (especially each Composite slot's order) lands as its
+                # own broker call.  Reduce-only orders run first to
+                # prevent flip races where a fresh entry would land on
+                # top of a position the strategy is trying to close.
+                prev_history_len = len(self.supervisor.history)
+                skip_rest_of_bar = False
 
                 if decision.has_orders:
-                    for order in decision.orders:
-                        if getattr(order, 'reduce_only', False):
-                            has_exit_signal = True
-                            exit_reason = (decision.metadata or {}).get(
-                                "exit_reason", "STRATEGY_EXIT"
+                    for order in self._orders_for_execution(decision):
+                        strategy_name = self._strategy_name_for_order(order)
+                        if getattr(order, "reduce_only", False):
+                            await self._handle_exit_order(
+                                sym, order, strategy_name, decision,
                             )
                         else:
-                            strategy_sig = "+1" if order.side == OrderSide.BUY else "-1"
-                elif decision.has_signal:
-                    strategy_sig = decision.signal
-
-                # ── Handle strategy exit signals (reduce_only) ────────
-                prev_history_len = len(self.supervisor.history)
-
-                if has_exit_signal and self.supervisor.position_qty(sym) != 0.0:
-                    exit_type_str = exit_reason or "STRATEGY_EXIT"
-                    log.info("[%s] Strategy exit signal: %s", sym, exit_type_str)
-                    await self.supervisor.close_position(
-                        symbol=sym,
-                        strategy_name=self.cfg.name,
-                        exit_type=exit_type_str,
-                    )
-
-                # ── Use strategy signal directly; sentiment adjusts margin ──
-                final_sig = int(strategy_sig) if strategy_sig is not None else None
-
-                if final_sig and not risk_block_entries:
-                    # Phase E1 — stale-feed gate.  When the WS hasn't
-                    # spoken in a while we don't trust our view of the
-                    # market enough to open a fresh position.  Existing
-                    # positions stay protected by their server-side
-                    # SL/TP; only entries are blocked.
-                    max_age = float(getattr(self.cfg.execution,
-                                             "max_tick_age_seconds", 0.0) or 0.0)
-                    if max_age > 0 and self.streamer is not None:
-                        stale = self.streamer.seconds_since_last_message
-                        if stale > max_age:
-                            log.warning(
-                                "[%s] entry blocked — feed stale %.1fs > %.1fs",
-                                sym, stale, max_age,
+                            outcome = await self._handle_entry_order(
+                                sym, order, strategy_name, bar_dict, tf,
+                                risk_block_entries=risk_block_entries,
                             )
-                            try:
-                                await self.notifier.kill_switch(
-                                    f"feed stale {stale:.0f}s — blocking entries"
-                                )
-                            except Exception:
-                                pass
-                            continue
-
-                    leverage = self.cfg.leverage_for(sym)
-
-                    # Sentiment-driven margin boost
-                    margin_multiplier = await self._get_sentiment_margin_multiplier(
-                        sym, final_sig,
+                            if outcome == "feed_stale":
+                                # Legacy parity: stale feed historically
+                                # short-circuits the bar — no further
+                                # entries, no position update, no
+                                # history rollup.  Preserve that exact
+                                # behaviour so the canary divergence
+                                # harness stays calibrated.
+                                skip_rest_of_bar = True
+                                break
+                elif decision.has_signal:
+                    outcome = await self._handle_legacy_signal(
+                        sym, decision.signal, bar_dict, tf,
+                        risk_block_entries=risk_block_entries,
                     )
+                    if outcome == "feed_stale":
+                        skip_rest_of_bar = True
 
-                    log.info(
-                        "[%s] Opening position: direction=%+d | margin_mult=%.2f",
-                        sym, final_sig, margin_multiplier,
-                    )
-
-                    opened = await self.supervisor.open_position(
-                        symbol=sym,
-                        side=final_sig,
-                        strategy_name=self.cfg.name,
-                        leverage=leverage,
-                        timeframe=tf,
-                        margin_multiplier=margin_multiplier,
-                    )
-                    if opened:
-                        actual_qty = abs(self.supervisor.position_qty(sym))
-                        await self.notifier.position_opened(
-                            sym, "LONG" if final_sig > 0 else "SHORT",
-                            actual_qty, float(bar_dict.get("c", 0)), leverage,
-                        )
+                if skip_rest_of_bar:
+                    continue
 
                 # ── Update existing positions (exit checks) ────────────
                 # Only update the current symbol's position manager
