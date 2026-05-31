@@ -543,6 +543,13 @@ def _add_sweep_parser(subparsers):
     p.add_argument("--cv-min-active", type=int, default=2,
                    help="Floor on active params at each rung (default 2)")
 
+    # Scorer min-trades penalty floor.  Combos with fewer trades get
+    # score = -1000 + total_trades, which dominates ranking.  Lower for
+    # very-selective strategies (e.g., ICT) so the actual Sharpe ordering
+    # of low-trade combos becomes visible.
+    p.add_argument("--scorer-min-trades", type=int, default=10,
+                   help="Scorer's insufficient-trades penalty floor (default 10)")
+
     # Selector — minimum-quality filters
     p.add_argument("--min-trades", type=int, default=None,
                    help="Drop combos with fewer than N trades")
@@ -588,6 +595,7 @@ def _cmd_sweep(args):
         cv_aggregate=args.cv_aggregate,
         cv_expanding=args.cv_expanding,
         cv_hyperband=args.cv_hyperband,
+        scorer_min_trades=args.scorer_min_trades,
         cv_halving_factor=args.cv_halving_factor,
         cv_min_active=args.cv_min_active,
         min_trades=args.min_trades,

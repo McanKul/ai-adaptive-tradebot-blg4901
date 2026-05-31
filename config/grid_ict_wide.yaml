@@ -1,0 +1,50 @@
+# =====================================================================
+# config/grid_ict_wide.yaml
+# =====================================================================
+# Mid-wide ICT sweep — 6 most impactful knobs × 2-3 values = 48 combos.
+# Hyperband 4-rung CV: 48 → 24 → 12 → 6 = ~90 evals.
+# AVAX 1y 5m, ~2.5 min/fold → ~3.5 hours.
+#
+# Run with `--scorer-min-trades 2` so 2-5 trade combos rank by real
+# Sharpe rather than insufficient-trades penalty.
+# =====================================================================
+
+grid:
+  # Bias zone width — biggest filter (23% blocks on default)
+  fib_discount_max: [0.5, 0.65]
+
+  # OTE band — both ends
+  ote_lower: [0.5, 0.62]
+  ote_upper: [0.79, 0.85]
+
+  # FVG quality filter
+  fvg_min_size_atr: [0.0, 0.3]
+
+  # Sweep wick aggressiveness
+  sweep_wick_ratio: [0.3, 0.5]
+
+  # Risk/reward target (TP placement)
+  rr_target: [2.0, 3.0, 5.0]
+
+  # Held at sensible defaults
+  fib_premium_min: [0.5]
+  htf_bars_per_ltf: [12]
+  htf_swing_window: [5]
+  min_htf_bars: [20]
+  sweep_lookback: [24]
+  sweep_max_age_bars: [8]
+  mss_swing_window: [3]
+  mss_max_age_bars: [6]
+  fvg_max_age_bars: [10]
+  entry_mode: ["market"]
+  risk_pct: [0.005]
+  kill_zone_enabled: [true]
+  london_start_utc: [7]
+  london_end_utc: [10]
+  ny_start_utc: [13]
+  ny_end_utc: [16]
+  atr_period: [14]
+  max_holding_bars: [48]
+  allow_reversal: [false]
+
+constraints: []

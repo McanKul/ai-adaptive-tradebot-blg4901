@@ -120,6 +120,7 @@ class SweepService:
         constraints: Optional[List[Dict[str, Any]]] = None,
         # NEW: Selector / filters
         min_trades: Optional[int] = None,
+        scorer_min_trades: int = 10,
         min_sharpe: Optional[float] = None,
         max_drawdown: Optional[float] = None,
         min_win_rate: Optional[float] = None,
@@ -204,7 +205,7 @@ class SweepService:
         batch = BatchBacktest(
             config=bt_cfg,
             strategy_factory=_factory,
-            scorer=Scorer(),
+            scorer=Scorer(min_trades=scorer_min_trades),
             strategy_name=strategy_name,
         )
 
