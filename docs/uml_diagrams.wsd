@@ -1,3 +1,14 @@
+'============================================================
+' AI-Adaptive Trading Bot — UML Diagrams (DETAILED set)
+' Regenerated to match the current architecture.
+'   * core/ orchestration layer (services + factories + bootstrap + validator)
+'   * CompositeStrategy / StrategySlot + regime detectors
+'   * sentiment now ADJUSTS MARGIN (IMarginAdjuster), no longer gates signals
+'   * live stack: BinanceBroker / DryBroker, LiveSupervisor, PositionStore,
+'     RejectionCounter, MarkPriceTickStreamer, LiveMetrics, TelegramNotifier
+'   * Backtest scoring / cross-validation pipeline
+'============================================================
+
 @startuml Package_Overview
 !theme cerulean-outline
 title <size:20>**AI-Adaptive Trading Bot**</size>\n<size:14>Proje Paket Diyagramı</size>
@@ -14,55 +25,83 @@ skinparam {
   ArrowThickness 2
 }
 
+skinparam package<<entry>> {
+  BackgroundColor #FDEBD0
+  BorderColor #E67E22
+}
+skinparam package<<core>> {
+  BackgroundColor #FCF3CF
+  BorderColor #D4AC0D
+}
 skinparam package<<interface>> {
   BackgroundColor #EBF5FB
   BorderColor #2980B9
 }
-
 skinparam package<<backtest>> {
   BackgroundColor #FDEDEC
   BorderColor #E74C3C
 }
-
 skinparam package<<strategy>> {
   BackgroundColor #F9EBEA
   BorderColor #8E44AD
 }
-
 skinparam package<<live>> {
   BackgroundColor #E8F8F5
   BorderColor #1ABC9C
 }
-
 skinparam package<<news>> {
   BackgroundColor #FEF9E7
   BorderColor #F39C12
 }
-
+skinparam package<<data>> {
+  BackgroundColor #EAF2F8
+  BorderColor #5499C7
+}
 skinparam package<<utils>> {
   BackgroundColor #F2F3F4
   BorderColor #7F8C8D
 }
 
-skinparam package<<entry>> {
-  BackgroundColor #FDEBD0
-  BorderColor #E67E22
+package "app.py (CLI)" <<entry>> as EP {
+  [backtest] #FAD7A0
+  [sweep / walk-forward] #FAD7A0
+  [live / dry-run] #FAD7A0
+  [validate] #FAD7A0
+}
+
+package "core (Orchestration)" <<core>> as CORE {
+  [bootstrap] #F9E79F
+  [config_validator] #F9E79F
+  package "services" {
+    [BacktestService] #F7DC6F
+    [SweepService] #F7DC6F
+    [LiveService] #F7DC6F
+  }
+  package "factories" {
+    [StrategyFactory] #FCF3CF
+    [CompositeFactory] #FCF3CF
+    [RegimeFactory] #FCF3CF
+    [BrokerFactory] #FCF3CF
+    [NewsFactory] #FCF3CF
+  }
 }
 
 package "Interfaces" <<interface>> as IF {
   [IStrategy] #D6EAF8
+  [IRegimeDetector] #D6EAF8
   [IBroker] #D6EAF8
   [IClient] #D6EAF8
-  [ISignalCombiner] #D6EAF8
-  [ISentimentAnalyzer] #D6EAF8
-  [INewsSource] #D6EAF8
   [IStreamer] #D6EAF8
+  [INewsSource] #D6EAF8
+  [ISentimentAnalyzer] #D6EAF8
+  [IMarginAdjuster] #D6EAF8
   [market_data] #AED6F1
   [orders] #AED6F1
   [cost_interface] #AED6F1
   [metrics_interface] #AED6F1
   [risk_interface] #AED6F1
   [strategy_adapter] #AED6F1
+  [strategy_slot] #AED6F1
 }
 
 package "Backtest" <<backtest>> as BT {
@@ -74,10 +113,9 @@ package "Backtest" <<backtest>> as BT {
   [metrics] #FADBD8
   [exit_manager] #FADBD8
   [risk] #FADBD8
-  [tick_store] #FADBD8
-  [disk_streamer] #FADBD8
   [realism_config] #FADBD8
   [runner] #FADBD8
+  [multi_symbol_sync] #FADBD8
   package "scoring" {
     [scorer] #F5B7B1
     [batch] #F5B7B1
@@ -91,48 +129,192 @@ package "Strategy" <<strategy>> as ST {
   [binary_base_strategy] #E8DAEF
   [RSIThreshold] #E8DAEF
   [DonchianATRVolTarget] #E8DAEF
+  [EMA_MACD_ATR] #E8DAEF
+  [EMACrossMACDTrend] #E8DAEF
+  [ICTLiquiditySweepFVG] #E8DAEF
+  [composite_strategy] #D2B4DE
+  package "arb" {
+    [funding_arb_strategy] #E8DAEF
+  }
+  package "regime" {
+    [adx_regime] #EBDEF0
+    [atr_vol_regime] #EBDEF0
+    [composite_regime] #EBDEF0
+  }
+}
+
+package "Data Layer" <<data>> as DL {
+  [tick_store] #AED6F1
+  [disk_streamer] #AED6F1
+  [bar_store] #AED6F1
+  [binance_vision] #AED6F1
 }
 
 package "Live Trading" <<live>> as LV {
   [live_engine] #D1F2EB
-  [broker_binance] #D1F2EB
-  [binance_client] #D1F2EB
-  [live_config] #D1F2EB
+  [live_supervisor] #D1F2EB
   [position_manager] #D1F2EB
-  [global_risk] #D1F2EB
-  [rate_limiter] #D1F2EB
+  [position_store] #D1F2EB
+  [broker_binance] #D1F2EB
+  [dry_broker] #D1F2EB
+  [binance_client] #D1F2EB
   [streamer] #D1F2EB
+  [tick_stream] #D1F2EB
+  [global_risk] #D1F2EB
+  [rejection_counter] #D1F2EB
+  [live_metrics] #D1F2EB
+  [notifier] #D1F2EB
+  [rate_limiter] #D1F2EB
+  [live_config] #D1F2EB
 }
 
 package "News & Sentiment" <<news>> as NW {
-  [signal_combiner] #FDEBD0
+  [news_engine] #FDEBD0
   [crypto_news_source] #FDEBD0
+  [ddg_news_source] #FDEBD0
   [openai_sentiment] #FDEBD0
   [gemini_sentiment] #FDEBD0
-  [news_engine] #FDEBD0
+  [signal_combiner] #FDEBD0
 }
 
 package "Utils" <<utils>> as UT {
-  [bar_store] #D5D8DC
   [logger] #D5D8DC
   [leverage_utils] #D5D8DC
   [levels] #D5D8DC
 }
 
-package "Entry Point" <<entry>> as EP {
-  [app.py] #FAD7A0
-}
-
+EP -[#E67E22,bold]-> CORE : <<dispatch>>
+CORE -[#E74C3C,bold]-> BT : <<runs backtest/sweep>>
+CORE -[#1ABC9C,bold]-> LV : <<runs live/dry>>
+CORE -[#8E44AD,dashed]-> ST : <<builds>>
+CORE -[#F39C12,dashed]-> NW : <<builds>>
 BT -[#2980B9]-> IF : <<implements>>
 ST -[#8E44AD]-> IF : <<implements>>
 LV -[#1ABC9C]-> IF : <<implements>>
 NW -[#F39C12]-> IF : <<implements>>
-BT -[#7F8C8D,dashed]-> UT : <<uses>>
-LV -[#7F8C8D,dashed]-> UT : <<uses>>
-LV -[#F39C12,dashed]-> NW : <<uses>>
-EP -[#E74C3C,bold]-> BT : <<runs>>
-EP -[#1ABC9C,bold]-> LV : <<runs>>
-EP -[#8E44AD,dashed]-> ST : <<configures>>
+BT -[#5499C7]-> DL : <<reads ticks>>
+LV -[#5499C7]-> DL : <<bars>>
+LV -[#F39C12,dashed]-> NW : <<margin boost>>
+BT -[#7F8C8D,dashed]-> UT
+LV -[#7F8C8D,dashed]-> UT
+
+@enduml
+
+' ============================================================
+@startuml Core_Orchestration
+!theme cerulean-outline
+title <size:18>**Core - Orchestration Layer (Services & Factories)**</size>
+
+skinparam {
+  shadowing true
+  defaultFontSize 11
+  classFontSize 13
+  classFontStyle bold
+  ArrowColor #34495E
+  ArrowThickness 1.5
+}
+skinparam class<<service>> {
+  BackgroundColor #F7DC6F
+  BorderColor #D4AC0D
+  HeaderBackgroundColor #F4D03F
+}
+skinparam class<<factory>> {
+  BackgroundColor #FCF3CF
+  BorderColor #D4AC0D
+  HeaderBackgroundColor #F9E79F
+}
+skinparam class<<util>> {
+  BackgroundColor #F2F3F4
+  BorderColor #7F8C8D
+  HeaderBackgroundColor #D5D8DC
+}
+
+class BacktestService <<service>> {
+  +run_single(strategy_name, params, symbol, ...): BacktestResult
+  +run_with_cv(...): BatchResult
+  +export_trades(result, path, ...)
+  +print_result(result)
+  -_build_sizing(...): SizingConfig
+}
+
+class SweepService <<service>> {
+  +run_sweep(strategy_name, param_grid, symbol, ...): List[RankedResult]
+  +print_top_results(results, top_n)
+  -_build_search_space(grid, constraints)
+  -_build_selection_criteria(...): SelectionCriteria
+}
+
+class LiveService <<service>> {
+  +run(config_path, dry_run, run_id, sentiment_override): async
+  -_validate_live_strategy_safety(cfg, dry_run)
+}
+
+class StrategyFactory <<factory>> {
+  -_registry: dict[str, str]
+  +register(name, module_path)
+  +resolve_class(name): type
+  +create(name, **kwargs): IStrategy
+  +list_available(): list[str]
+}
+
+class CompositeFactory <<factory>> {
+  +from_spec(spec, regime_detector): CompositeStrategy
+  +from_path(path, regime_detector): CompositeStrategy
+}
+
+class RegimeFactory <<factory>> {
+  -_registry: dict[str, str]
+  +register(name, dotted_path)
+  +from_spec(spec): IRegimeDetector
+}
+
+class BrokerFactory <<factory>> {
+  +create(mode, cfg): (IBroker, client)
+}
+
+class NewsFactory <<factory>> {
+  -_providers: dict[str, Callable]
+  +register_provider(name, creator)
+  +create(cfg): NewsComponents
+}
+
+class NewsComponents <<util>> {
+  +news_source: INewsSource
+  +sentiment_analyzer: ISentimentAnalyzer
+  +margin_adjuster: IMarginAdjuster
+}
+
+class ConfigValidator <<util>> {
+  +validate(config_path, real_money): List[str]
+  -_real_money_checks(cfg): List[str]
+}
+
+class bootstrap <<util>> {
+  +register_defaults()
+}
+
+bootstrap .[#D4AC0D,dashed].> StrategyFactory : registers strategies
+bootstrap .[#D4AC0D,dashed].> RegimeFactory : registers detectors
+bootstrap .[#D4AC0D,dashed].> NewsFactory : registers providers
+
+BacktestService -[#D4AC0D]-> StrategyFactory
+BacktestService -[#D4AC0D]-> CompositeFactory
+SweepService -[#D4AC0D]-> StrategyFactory
+LiveService -[#D4AC0D]-> StrategyFactory
+LiveService -[#D4AC0D]-> CompositeFactory
+LiveService -[#D4AC0D]-> BrokerFactory
+LiveService -[#D4AC0D]-> NewsFactory
+CompositeFactory -[#D4AC0D]-> StrategyFactory
+CompositeFactory -[#D4AC0D]-> RegimeFactory
+NewsFactory -[#D4AC0D]-> NewsComponents
+ConfigValidator .[#7F8C8D,dashed].> StrategyFactory
+
+note bottom of LiveService #FDEBD0
+  Services are <b>thin orchestrators</b>:
+  factories build concrete impls,
+  service wires them, then hands
+  control to BacktestEngine / LiveEngine.
+end note
 
 @enduml
 
@@ -150,19 +332,16 @@ skinparam {
   ArrowColor #34495E
   ArrowThickness 1.5
 }
-
 skinparam class {
   BackgroundColor #FDFEFE
   BorderColor #2C3E50
   HeaderBackgroundColor #D5DBDB
 }
-
 skinparam class<<enum>> {
   BackgroundColor #EBF5FB
   BorderColor #2980B9
   HeaderBackgroundColor #AED6F1
 }
-
 skinparam class<<dataclass>> {
   BackgroundColor #FEF9E7
   BorderColor #F39C12
@@ -179,8 +358,6 @@ enum OrderType <<enum>> {
 enum OrderSide <<enum>> {
   BUY
   SELL
-  --
-  +from_string(s: str): OrderSide
 }
 
 enum OrderStatus <<enum>> {
@@ -198,9 +375,6 @@ class Tick <<dataclass>> {
   +volume: float
   +side: str
   +trade_id: int
-  .. derived ..
-  +timestamp_ms: float
-  +timestamp_s: float
 }
 
 class Bar <<dataclass>> {
@@ -208,26 +382,22 @@ class Bar <<dataclass>> {
   +timeframe: str
   +timestamp_ns: int
   .. OHLCV ..
-  +open: float
-  +high: float
-  +low: float
-  +close: float
+  +open / high / low / close: float
   +volume: float
   .. computed ..
   +tick_count: int
   +dollar_volume: float
-  +mid_price: float
-  +typical_price: float
-  +vwap: float
+  +mid_price / typical_price / vwap: float
 }
 
 class Order <<dataclass>> {
   +symbol: str
   +side: OrderSide
-  +type: OrderType
+  +order_type: OrderType
   +quantity: float
   +price: Optional[float]
   +stop_price: Optional[float]
+  +strategy_id: str
   +reduce_only: bool
   +metadata: Dict
 }
@@ -241,6 +411,7 @@ class Fill <<dataclass>> {
   +fee: float
   +slippage: float
   +timestamp_ns: int
+  +metadata: Dict
 }
 
 Order -[#2980B9]-> OrderType
@@ -263,14 +434,12 @@ skinparam {
   ArrowColor #34495E
   ArrowThickness 1.5
 }
-
 skinparam class<<abstract>> {
   BackgroundColor #FADBD8
   BorderColor #E74C3C
   HeaderBackgroundColor #F1948A
   FontStyle italic
 }
-
 skinparam class<<dataclass>> {
   BackgroundColor #FEF9E7
   BorderColor #F39C12
@@ -281,6 +450,8 @@ abstract class IStrategy <<abstract>> {
   +{abstract} generate_signal(symbol: str): Optional[str]
   +{abstract} on_bar(bar: Bar, ctx: StrategyContext): StrategyDecision
   +reset()
+  +get_exit_params(): Dict
+  +get_exit_manager(): Optional
 }
 
 class StrategyDecision <<dataclass>> {
@@ -292,51 +463,119 @@ class StrategyDecision <<dataclass>> {
 }
 
 class StrategyContext <<dataclass>> {
-  +symbol: str
-  +timeframe: str
+  +symbol / timeframe: str
   +bar_store: BarStore
-  +portfolio: Any
-  +position: Any
-  +equity: float
-  +cash: float
+  +portfolio / position: Any
+  +equity / cash: float
+  +timestamp_ns: int
   --
-  +get_ohlcv(): DataFrame
-  +get_position(): Any
+  +get_ohlcv(limit): Dict
+}
+
+class SizingConfig <<dataclass>> {
+  +mode: SizingMode
+  +fixed_qty / notional_usd / margin_usd
+  +leverage / leverage_mode
+  --
+  +compute_qty(price): float
+  +get_target_notional(): float
 }
 
 abstract class IBroker <<abstract>> {
-  +{abstract} get_mark_price(symbol: str): float
+  +{abstract} get_mark_price(symbol): float
   +{abstract} market_order(symbol, side, qty)
   +{abstract} close_position(symbol)
   +{abstract} position_amt(symbol): float
   +{abstract} set_leverage(symbol, leverage)
-  +{abstract} place_stop_market(symbol, side, qty, stop_price)
-  +{abstract} place_take_profit(symbol, side, qty, price)
-  +{abstract} get_open_orders(symbol): list
+  +{abstract} place_stop_market(...) : int
+  +{abstract} place_take_profit(...) : int
+  +{abstract} wait_for_fill(symbol, id, timeout): dict
+  +{abstract} get_24h_volume(symbol): float
   +{abstract} balance(asset): float
 }
 
 abstract class IClient <<abstract>> {
   +{abstract} futures_exchange_info()
-  +{abstract} futures_mark_price(symbol)
   +{abstract} futures_create_order(**params)
   +{abstract} futures_position_information(symbol)
   +{abstract} futures_account_balance()
   +{abstract} futures_klines(symbol, interval, limit)
-  +{abstract} futures_change_margin_type(symbol, marginType)
   +{abstract} futures_change_leverage(symbol, leverage)
 }
 
 abstract class IStreamer <<abstract>> {
-  +{abstract} start()
-  +{abstract} stop()
+  +{abstract} start() / stop()
   +{abstract} get_queue(): asyncio.Queue
   +{abstract} preload_history(symbols, intervals, limit, batch)
 }
 
 IStrategy -[#27AE60,bold]-> StrategyDecision : returns
 IStrategy -[#2980B9,bold]-> StrategyContext : receives
+StrategyContext -[#F39C12]-> SizingConfig
 IBroker .[#7F8C8D,dashed].> IClient : uses
+
+@enduml
+
+' ============================================================
+@startuml Class_Interfaces_Regime
+!theme cerulean-outline
+title <size:18>**Interfaces - Regime Detection & Strategy Slots**</size>
+
+skinparam {
+  shadowing true
+  defaultFontSize 11
+  classFontSize 13
+  classFontStyle bold
+  ArrowColor #34495E
+  ArrowThickness 1.5
+}
+skinparam class<<abstract>> {
+  BackgroundColor #FADBD8
+  BorderColor #E74C3C
+  HeaderBackgroundColor #F1948A
+  FontStyle italic
+}
+skinparam class<<dataclass>> {
+  BackgroundColor #FEF9E7
+  BorderColor #F39C12
+  HeaderBackgroundColor #F9E79F
+}
+
+abstract class IRegimeDetector <<abstract>> {
+  +{abstract} detect(bar: Bar, ctx): RegimeState
+}
+
+class RegimeState <<dataclass>> {
+  +tags: List[str]   ' e.g. trend_up, vol_high, range
+  +score: Dict[str, float]   ' adx, atr_rank, ...
+}
+
+class StrategySlot <<dataclass>> {
+  +id: str
+  +strategy: IStrategy
+  +weight: float
+  +entry_coefficient: float
+  +sizing: Optional[SizingConfig]
+  +exit: Optional[ExitConfig]
+  +risk_limits: Optional[Dict]
+  +regimes: Optional[List[str]]
+  +enabled: bool
+}
+
+class AdaptedOutput <<dataclass>> {
+  +orders: List[Order]
+  +decision: Optional[StrategyDecision]
+  +source: str
+}
+
+IRegimeDetector -[#27AE60,bold]-> RegimeState : returns
+StrategySlot -[#8E44AD]-> IStrategy : wraps
+
+note bottom of StrategySlot #EBF5FB
+  adapt_strategy_output(strategy, bar, ctx) → AdaptedOutput
+  unifies on_bar() / generate_signal() interfaces;
+  apply_sizing_to_orders() then fills real quantities.
+end note
 
 @enduml
 
@@ -353,25 +592,29 @@ skinparam {
   ArrowColor #34495E
   ArrowThickness 1.5
 }
-
 skinparam class<<abstract>> {
   BackgroundColor #FADBD8
   BorderColor #E74C3C
   HeaderBackgroundColor #F1948A
   FontStyle italic
 }
-
 skinparam class<<dataclass>> {
   BackgroundColor #FEF9E7
   BorderColor #F39C12
   HeaderBackgroundColor #F9E79F
+}
+skinparam class<<deprecated>> {
+  BackgroundColor #F2F3F4
+  BorderColor #7F8C8D
+  HeaderBackgroundColor #D5D8DC
+  FontStyle italic
 }
 
 class NewsArticle <<dataclass>> {
   +title: str
   +content: str
   +source: str
-  +published_at: datetime
+  +published_at: str
   +symbol: str
 }
 
@@ -383,11 +626,21 @@ abstract class ISentimentAnalyzer <<abstract>> {
   +{abstract} analyze(texts: List[str], symbol: str): float
 }
 
-abstract class ISignalCombiner <<abstract>> {
-  +{abstract} combine(strategy_signal: Optional[int],\n  sentiment_score: float): Optional[int]
+abstract class IMarginAdjuster <<abstract>> {
+  +{abstract} compute_margin_multiplier(direction: int,\n  sentiment_score: float): float
+}
+
+abstract class ISignalCombiner <<deprecated>> {
+  +{abstract} combine(strategy_signal,\n  sentiment_score): Optional[int]
 }
 
 INewsSource -[#27AE60,bold]-> NewsArticle : produces
+
+note bottom of IMarginAdjuster #FEF9E7
+  <b>Replaces ISignalCombiner.</b>
+  Sentiment no longer gates the signal — it
+  scales position margin (boost up to +50%).
+end note
 
 @enduml
 
@@ -404,13 +657,11 @@ skinparam {
   ArrowColor #34495E
   ArrowThickness 1.5
 }
-
 skinparam class<<protocol>> {
   BackgroundColor #E8DAEF
   BorderColor #8E44AD
   HeaderBackgroundColor #D2B4DE
 }
-
 skinparam class<<dataclass>> {
   BackgroundColor #FEF9E7
   BorderColor #F39C12
@@ -418,62 +669,308 @@ skinparam class<<dataclass>> {
 }
 
 interface ICostModel <<protocol>> {
-  +total_cost(price, qty, side): float
+  +total_cost(order, fill_price, bar, rng, is_maker): tuple
 }
-
 interface IFeeModel <<protocol>> {
-  +calculate_fee(price, qty, side): float
+  +calculate_fee(notional, side, is_maker): float
 }
-
 interface ISlippageModel <<protocol>> {
-  +calculate_slippage(price, qty, side): float
+  +calculate_slippage(price, qty, side, bar, rng): float
 }
-
 interface ISpreadModel <<protocol>> {
-  +calculate_spread_cost(price, qty): float
+  +calculate_spread_cost(price, side): float
 }
-
 interface ILatencyModel <<protocol>> {
-  +get_latency_ns(): int
+  +get_latency_ns(rng): int
 }
-
 interface IRiskManager <<protocol>> {
   +pre_trade_check(order, portfolio, bar): bool
   +is_kill_switch_active(): bool
-  +update_daily_pnl(pnl: float)
-  +reset_daily()
-  +reset()
+  +update_daily_pnl(pnl)
+  +reset_daily() / reset()
   +get_state(): Dict
 }
 
 class BacktestResult <<dataclass>> {
   +strategy_name: str
   +params: Dict
-  +equity_curve: List
-  +trades: List
+  +equity_curve / trades: List
   .. performance ..
-  +total_return: float
-  +sharpe_ratio: float
-  +max_drawdown: float
-  +win_rate: float
+  +total_return / sharpe_ratio: float
+  +max_drawdown / win_rate: float
+  +profit_factor / calmar_ratio: float
   .. costs ..
-  +total_fees: float
-  +total_slippage: float
+  +total_fees / total_slippage: float
 }
 
 interface IMetricsSink <<protocol>> {
   +on_bar(bar, equity, position)
   +on_order(order)
   +on_fill(fill, portfolio_equity)
-  +finalize(initial_capital, final_equity,\n  start_ts, end_ts): BacktestResult
-  +reset()
+  +finalize(...): BacktestResult
 }
 
-ICostModel .[#8E44AD].> IFeeModel
-ICostModel .[#8E44AD].> ISlippageModel
-ICostModel .[#8E44AD].> ISpreadModel
-ICostModel .[#8E44AD].> ILatencyModel
+ICostModel .[#8E44AD,dashed].> IFeeModel
+ICostModel .[#8E44AD,dashed].> ISlippageModel
+ICostModel .[#8E44AD,dashed].> ISpreadModel
+ICostModel .[#8E44AD,dashed].> ILatencyModel
 IMetricsSink -[#27AE60,bold]-> BacktestResult : produces
+
+@enduml
+
+' ============================================================
+@startuml Class_Strategy_Base
+!theme cerulean-outline
+title <size:18>**Strategy - Base & Simple Signal Strategies**</size>
+
+skinparam {
+  shadowing true
+  defaultFontSize 11
+  classFontSize 13
+  classFontStyle bold
+  ArrowColor #34495E
+  ArrowThickness 1.5
+}
+skinparam class<<abstract>> {
+  BackgroundColor #E8DAEF
+  BorderColor #8E44AD
+  HeaderBackgroundColor #D2B4DE
+  FontStyle italic
+}
+skinparam class<<iface>> {
+  BackgroundColor #FADBD8
+  BorderColor #E74C3C
+  HeaderBackgroundColor #F1948A
+  FontStyle italic
+}
+skinparam class<<strategy>> {
+  BackgroundColor #D5F5E3
+  BorderColor #27AE60
+  HeaderBackgroundColor #ABEBC6
+}
+
+abstract class IStrategy <<iface>> {
+  +generate_signal(symbol)
+  +on_bar(bar, ctx): StrategyDecision
+}
+
+abstract class BinaryBaseStrategy <<abstract>> {
+  #bar_store: BarStore
+  #buf: DataFrame
+  #params: Dict
+  --
+  +{abstract} _live_signal(o, h, l, c, v): Optional[str]
+  +generate_signal(symbol): Optional[str]
+  +on_bar(bar, ctx): StrategyDecision
+  +reset()
+  +get_exit_params(): Dict
+}
+
+class RSIThreshold <<strategy>> {
+  -rsi_period / rsi_overbought / rsi_oversold
+  -position_size: float
+  .. exit ..
+  -take_profit_pct / stop_loss_pct
+  -trailing_stop_pct / max_holding_bars
+  -leverage: int
+  --
+  +_live_signal(o, h, l, c, v): Optional[str]
+}
+
+class DonchianATRVolTarget <<strategy>> {
+  -dc_period / atr_period / atr_mult
+  -risk_pct: float
+  -filter_type: str   ' ema | adx | none
+  -ema_period / adx_period / adx_threshold
+  -allow_reversal / max_holding_bars
+  --
+  +on_bar(bar, ctx): StrategyDecision
+}
+
+IStrategy <|--[#8E44AD] BinaryBaseStrategy
+BinaryBaseStrategy <|--[#27AE60] RSIThreshold
+IStrategy <|--[#8E44AD] DonchianATRVolTarget
+
+RSIThreshold .[#7F8C8D,dashed].> ExitManager : uses
+DonchianATRVolTarget .[#27AE60,dashed].> StrategyDecision : returns
+RSIThreshold .[#27AE60,dashed].> StrategyDecision : returns
+
+@enduml
+
+' ============================================================
+@startuml Class_Strategy_Advanced
+!theme cerulean-outline
+title <size:18>**Strategy - Advanced (Trend, ICT, Arbitrage)**</size>
+
+skinparam {
+  shadowing true
+  defaultFontSize 11
+  classFontSize 13
+  classFontStyle bold
+  ArrowColor #34495E
+  ArrowThickness 1.5
+}
+skinparam class<<iface>> {
+  BackgroundColor #FADBD8
+  BorderColor #E74C3C
+  HeaderBackgroundColor #F1948A
+  FontStyle italic
+}
+skinparam class<<strategy>> {
+  BackgroundColor #D5F5E3
+  BorderColor #27AE60
+  HeaderBackgroundColor #ABEBC6
+}
+skinparam class<<special>> {
+  BackgroundColor #FDEBD0
+  BorderColor #E67E22
+  HeaderBackgroundColor #F5CBA7
+}
+
+abstract class IStrategy <<iface>> {
+  +on_bar(bar, ctx): StrategyDecision
+}
+
+class EMA_MACD_ATR <<strategy>> {
+  -ema_fast (50) / ema_slow (200)
+  -macd_fast / macd_slow / macd_signal
+  -atr_period / atr_mult / risk_pct
+  -allow_reversal / max_holding_bars
+  --
+  +on_bar(bar, ctx): StrategyDecision
+}
+
+class EMACrossMACDTrend <<strategy>> {
+  -fast_ema / slow_ema / macd_signal
+  -adx_period / adx_threshold
+  -rsi filter / volume filter
+  -use_ema_slope / exit_on_macd_cross
+  --
+  +on_bar(bar, ctx): StrategyDecision
+}
+
+class ICTLiquiditySweepFVG <<strategy>> {
+  -killzone (London / NY AM)
+  -HTF bias (swing HH/HL/LL/LH)
+  -liquidity sweep + rejection
+  -MSS / CHoCH break
+  -Fair Value Gap (FVG) >= min_atr
+  -OTE 0.62-0.79 confluence
+  -rr_target / entry mode
+  --
+  +on_bar(bar, ctx): StrategyDecision
+}
+
+class FundingRateArbStrategy <<special>> {
+  -spot vs perpetual basis arb
+  -_LegPosition (both legs atomic)
+  -exit: timeout | funding flip | converged
+  --
+  +on_bar(bar, ctx): StrategyDecision
+}
+
+class BarSyncBuffer <<special>> {
+  -mode: strict | forward_fill
+  -tolerance_ns: int
+  --
+  +update(bar)
+  +try_emit(): Optional[MultiBar]
+}
+
+IStrategy <|--[#27AE60] EMA_MACD_ATR
+IStrategy <|--[#27AE60] EMACrossMACDTrend
+IStrategy <|--[#27AE60] ICTLiquiditySweepFVG
+IStrategy <|--[#E67E22] FundingRateArbStrategy
+FundingRateArbStrategy -[#E67E22]-> BarSyncBuffer : multi-symbol sync
+
+@enduml
+
+' ============================================================
+@startuml Class_Strategy_Composite
+!theme cerulean-outline
+title <size:18>**Strategy - Composite & Regime Detectors**</size>
+
+skinparam {
+  shadowing true
+  defaultFontSize 11
+  classFontSize 13
+  classFontStyle bold
+  ArrowColor #34495E
+  ArrowThickness 1.5
+}
+skinparam class<<iface>> {
+  BackgroundColor #FADBD8
+  BorderColor #E74C3C
+  HeaderBackgroundColor #F1948A
+  FontStyle italic
+}
+skinparam class<<composite>> {
+  BackgroundColor #D2B4DE
+  BorderColor #8E44AD
+  HeaderBackgroundColor #BB8FCE
+}
+skinparam class<<regime>> {
+  BackgroundColor #EBDEF0
+  BorderColor #76448A
+  HeaderBackgroundColor #D7BDE2
+}
+skinparam class<<dataclass>> {
+  BackgroundColor #FEF9E7
+  BorderColor #F39C12
+  HeaderBackgroundColor #F9E79F
+}
+
+abstract class IStrategy <<iface>>
+abstract class IRegimeDetector <<iface>> {
+  +detect(bar, ctx): RegimeState
+}
+
+class CompositeStrategy <<composite>> {
+  -slots: List[StrategySlot]
+  -default_sizing: Optional[SizingConfig]
+  -regime_detector: Optional[IRegimeDetector]
+  -policy: str   ' fixed | regime_gate | regime_weight
+  -_slot_exits: Dict[str, ExitManager]
+  -_slot_positions: Dict
+  --
+  +on_bar(bar, ctx): StrategyDecision
+}
+
+class StrategySlot <<dataclass>> {
+  +id / weight / entry_coefficient
+  +strategy: IStrategy
+  +sizing / exit / regimes / enabled
+}
+
+class ADXRegimeDetector <<regime>> {
+  -period / trend_threshold / di_gap
+  +detect(bar, ctx): RegimeState
+}
+class ATRPercentileRegime <<regime>> {
+  -atr_period / window / hi_pct / lo_pct
+  +detect(bar, ctx): RegimeState
+}
+class CompositeRegimeDetector <<regime>> {
+  -detectors: List[IRegimeDetector]
+  +detect(bar, ctx): RegimeState
+}
+
+IStrategy <|--[#8E44AD] CompositeStrategy
+CompositeStrategy o-[#8E44AD]-> "*" StrategySlot
+CompositeStrategy -[#76448A]-> "0..1" IRegimeDetector
+StrategySlot -[#8E44AD]-> "1" IStrategy
+IRegimeDetector <|--[#76448A] ADXRegimeDetector
+IRegimeDetector <|--[#76448A] ATRPercentileRegime
+IRegimeDetector <|--[#76448A] CompositeRegimeDetector
+CompositeRegimeDetector o-[#76448A]-> "*" IRegimeDetector
+
+note bottom of CompositeStrategy #EBF5FB
+  policy:
+  • fixed → all enabled slots run
+  • regime_gate → slot active only if regimes match
+  • regime_weight → all run, entry_coefficient scaled by regime
+  Per-slot ExitManager stays active even when gated off.
+end note
 
 @enduml
 
@@ -490,25 +987,21 @@ skinparam {
   ArrowColor #34495E
   ArrowThickness 1.5
 }
-
 skinparam class {
   BackgroundColor #FDFEFE
   BorderColor #2C3E50
   HeaderBackgroundColor #D5DBDB
 }
-
 skinparam class<<engine>> {
   BackgroundColor #FADBD8
   BorderColor #E74C3C
   HeaderBackgroundColor #F1948A
 }
-
 skinparam class<<dataclass>> {
   BackgroundColor #FEF9E7
   BorderColor #F39C12
   HeaderBackgroundColor #F9E79F
 }
-
 skinparam class<<enum>> {
   BackgroundColor #EBF5FB
   BorderColor #2980B9
@@ -516,40 +1009,50 @@ skinparam class<<enum>> {
 }
 
 class BacktestEngine <<engine>> {
-  -tick_store: TickStore
-  -disk_streamer: DiskTickStreamer
+  -config: EngineConfig
+  -streamer: DiskTickStreamer
   -bar_builders: Dict[str, BarBuilder]
   -bar_store: BarStore
-  -strategy: IStrategy
-  -risk_manager: BasicRiskManager
-  -execution_model: SimpleExecutionModel
   -portfolio: Portfolio
-  -metrics_sink: MetricsSink
+  -execution_model: SimpleExecutionModel
+  -cost_models: Dict[str, CompositeCostModel]
+  -risk_manager: BasicRiskManager
+  -metrics: MetricsSink
   -exit_manager: ExitManager
-  -cost_model: CompositeCostModel
   ==
-  +run(): BacktestResult
+  +run(strategy: IStrategy, sizing): BacktestResult
+  -_process_bar(bar, strategy)
+  -_check_tick_exit(tick)
+  -_handle_liquidation(bar)
+}
+
+class EngineConfig <<dataclass>> {
+  +symbols / timeframe / bar_type
+  +initial_capital / leverage_mode
+  +leverage / maintenance_margin_ratio
+  +taker/maker_fee_bps / slippage_bps
+  +enable_tick_exit / tp_pct / sl_pct
+  +realism: RealismConfig
 }
 
 class Portfolio {
   -cash: float
-  -positions: Dict[str, Position]
   -leverage_mode: LeverageMode
   -margin_config: MarginConfig
+  -_positions: Dict[str, Position]
   --
-  +apply_fill(fill: Fill, price: float)
-  +equity(prices: Dict): float
-  +realized_pnl(): float
-  +unrealized_pnl(prices): float
+  +apply_fill(fill: Fill): float
+  +equity(): float
+  +current_leverage(): float
+  +is_liquidation_triggered(): bool
 }
 
 class Position <<dataclass>> {
   +symbol: str
-  +quantity: float
+  +quantity: float   ' signed
   +avg_entry_price: float
   +realized_pnl: float
-  +fees: float
-  +slippage: float
+  +unrealized_pnl(price): float
 }
 
 enum LeverageMode <<enum>> {
@@ -558,11 +1061,12 @@ enum LeverageMode <<enum>> {
 }
 
 class MarginConfig <<dataclass>> {
-  +leverage: int
+  +leverage: float
   +maintenance_margin_ratio: float
   +liquidation_buffer: float
 }
 
+BacktestEngine -[#E74C3C]-> EngineConfig
 BacktestEngine -[#E74C3C]-> Portfolio
 BacktestEngine -[#E74C3C]-> "1" IStrategy
 BacktestEngine -[#E74C3C]-> "1" MetricsSink
@@ -570,7 +1074,6 @@ BacktestEngine -[#E74C3C]-> "*" BarBuilder
 BacktestEngine -[#E74C3C]-> "1" SimpleExecutionModel
 BacktestEngine -[#E74C3C]-> "1" BasicRiskManager
 BacktestEngine -[#E74C3C]-> "1" ExitManager
-BacktestEngine -[#E74C3C]-> "1" BarStore
 BacktestEngine -[#E74C3C]-> "1" DiskTickStreamer
 Portfolio -[#F39C12]-> "*" Position
 Portfolio -[#2980B9]-> LeverageMode
@@ -591,14 +1094,12 @@ skinparam {
   ArrowColor #34495E
   ArrowThickness 1.5
 }
-
 skinparam class<<abstract>> {
   BackgroundColor #FADBD8
   BorderColor #E74C3C
   HeaderBackgroundColor #F1948A
   FontStyle italic
 }
-
 skinparam class<<concrete>> {
   BackgroundColor #D5F5E3
   BorderColor #27AE60
@@ -606,42 +1107,20 @@ skinparam class<<concrete>> {
 }
 
 abstract class BarBuilder <<abstract>> {
-  #symbol: str
-  #current_bar: Optional[Bar]
-  #bar_count: int
+  #symbol / timeframe: str
+  #_partial: Optional[PartialBar]
+  #_bar_count: int
   --
   +{abstract} _should_close_bar(tick: Tick): bool
-  +process_tick(tick: Tick): Optional[Bar]
+  +{abstract} _get_bar_open_ts(tick: Tick): int
+  +on_tick(tick: Tick): Optional[Bar]
   +flush(): Optional[Bar]
 }
 
-class TimeBarBuilder <<concrete>> {
-  -timeframe: str
-  -interval_ns: int
-  --
-  +_should_close_bar(tick: Tick): bool
-}
-
-class TickBarBuilder <<concrete>> {
-  -tick_count_threshold: int
-  -current_tick_count: int
-  --
-  +_should_close_bar(tick: Tick): bool
-}
-
-class VolumeBarBuilder <<concrete>> {
-  -volume_threshold: float
-  -current_volume: float
-  --
-  +_should_close_bar(tick: Tick): bool
-}
-
-class DollarBarBuilder <<concrete>> {
-  -dollar_threshold: float
-  -current_dollar_volume: float
-  --
-  +_should_close_bar(tick: Tick): bool
-}
+class TimeBarBuilder <<concrete>>
+class TickBarBuilder <<concrete>>
+class VolumeBarBuilder <<concrete>>
+class DollarBarBuilder <<concrete>>
 
 BarBuilder <|-- TimeBarBuilder
 BarBuilder <|-- TickBarBuilder
@@ -649,11 +1128,10 @@ BarBuilder <|-- VolumeBarBuilder
 BarBuilder <|-- DollarBarBuilder
 
 note bottom of BarBuilder #FDEBD0
-  <b>Factory Pattern</b>
-  create_bar_builder(type, symbol, params)
+  <b>Factory:</b> create_bar_builder(symbol, bar_type, ...)
   ----
-  Tick → Bar dönüşümü için
-  farklı bar türlerini destekler
+  Tick → Bar dönüşümü için farklı bar türlerini destekler
+  (time / tick / volume / dollar).
 end note
 
 BarBuilder .[#7F8C8D,dashed].> Tick : processes
@@ -674,19 +1152,16 @@ skinparam {
   ArrowColor #34495E
   ArrowThickness 1.5
 }
-
 skinparam class<<main>> {
   BackgroundColor #FADBD8
   BorderColor #E74C3C
   HeaderBackgroundColor #F1948A
 }
-
 skinparam class<<dataclass>> {
   BackgroundColor #FEF9E7
   BorderColor #F39C12
   HeaderBackgroundColor #F9E79F
 }
-
 skinparam class<<cost>> {
   BackgroundColor #D5F5E3
   BorderColor #27AE60
@@ -694,81 +1169,72 @@ skinparam class<<cost>> {
 }
 
 class SimpleExecutionModel <<main>> {
-  -cost_model: CompositeCostModel
   -partial_fill_config: PartialFillConfig
   -latency_config: LatencyConfig
-  -stats: ExecutionStats
-  -rng: Random
+  -_realism: RealismConfig
+  -_stats: ExecutionStats
   ==
-  +fill_order(order: Order, bar: Bar): Optional[Fill]
+  +process_orders(orders, bar, portfolio, cost_model, rng): List[Fill]
+  -_compute_fill_ratio(order, bar, rng): float
 }
 
+class PartialFillExecutionModel <<main>>
+class LimitExecutionModel <<main>>
+SimpleExecutionModel <|-- PartialFillExecutionModel
+SimpleExecutionModel <|-- LimitExecutionModel
+
 class ExecutionStats <<dataclass>> {
-  +total_fills: int
-  +total_rejections: int
-  +total_partial: int
-  +latency_samples: List[int]
+  +total_fills / partial_fills / rejected_orders
+  +latency_samples / slippage samples
+  +to_dict(): Dict
 }
 
 class PartialFillConfig <<dataclass>> {
-  +enabled: bool
+  +enable_partial_fills: bool
+  +liquidity_scale: float
   +min_fill_ratio: float
-  +volume_participation_rate: float
 }
 
 class LatencyConfig <<dataclass>> {
-  +enabled: bool
-  +mean_ns: int
-  +std_ns: int
+  +enable_latency: bool
+  +base_latency_ns / max_jitter_ns: int
 }
 
 class ReservoirSampler {
-  -capacity: int
-  -samples: List
-  -count: int
-  --
+  -max_size: int
   +add(item)
-  +get_samples(): List
+  +mean / p95 / p99
 }
 
 class CompositeCostModel <<main>> {
-  -fee_model: IFeeModel
-  -slippage_model: ISlippageModel
-  -spread_model: ISpreadModel
-  -latency_model: ILatencyModel
+  -fee_model / slippage_model
+  -spread_model / latency_model
   ==
-  +total_cost(price, qty, side): float
+  +total_cost(order, price, bar, rng, is_maker): tuple
+  +cost_breakdown(...): CostBreakdown
 }
 
 class FixedFeeModel <<cost>> {
-  -maker_rate: float
-  -taker_rate: float
-  +calculate_fee(price, qty, side): float
+  -taker_fee_rate / maker_fee_rate
+  +calculate(notional, side, is_maker): float
 }
-
-class FixedSlippageModel <<cost>> {
-  -slippage_bps: float
-  +calculate_slippage(price, qty, side): float
-}
-
-class SpreadCostModel <<cost>> {
-  -spread_bps: float
-  +calculate_spread_cost(price, qty): float
-}
-
-class LatencyModel <<cost>> {
-  -base_ns: int
-  -jitter_ns: int
-  +get_latency_ns(): int
-}
+class FixedSlippageModel <<cost>>
+class VolumeSqrtSlippageModel <<cost>>
+class VolatilityATRSlippageModel <<cost>>
+class SlippageNoiseWrapper <<cost>>
+class SpreadCostModel <<cost>>
+class LatencyModel <<cost>>
 
 SimpleExecutionModel -[#E74C3C]-> CompositeCostModel
 SimpleExecutionModel -[#F39C12]-> PartialFillConfig
 SimpleExecutionModel -[#F39C12]-> LatencyConfig
 SimpleExecutionModel -[#F39C12]-> ExecutionStats
-SimpleExecutionModel -[#7F8C8D]-> ReservoirSampler
+ExecutionStats -[#7F8C8D]-> ReservoirSampler
 CompositeCostModel -[#27AE60]-> FixedFeeModel
-CompositeCostModel -[#27AE60]-> FixedSlippageModel
+CompositeCostModel -[#27AE60]-> "1" FixedSlippageModel
+CompositeCostModel .[#27AE60,dashed].> VolumeSqrtSlippageModel
+CompositeCostModel .[#27AE60,dashed].> VolatilityATRSlippageModel
+CompositeCostModel .[#27AE60,dashed].> SlippageNoiseWrapper
 CompositeCostModel -[#27AE60]-> SpreadCostModel
 CompositeCostModel -[#27AE60]-> LatencyModel
 
@@ -787,25 +1253,21 @@ skinparam {
   ArrowColor #34495E
   ArrowThickness 1.5
 }
-
 skinparam class<<risk>> {
   BackgroundColor #FADBD8
   BorderColor #C0392B
   HeaderBackgroundColor #F1948A
 }
-
 skinparam class<<dataclass>> {
   BackgroundColor #FEF9E7
   BorderColor #F39C12
   HeaderBackgroundColor #F9E79F
 }
-
 skinparam class<<enum>> {
   BackgroundColor #EBF5FB
   BorderColor #2980B9
   HeaderBackgroundColor #AED6F1
 }
-
 skinparam class<<metrics>> {
   BackgroundColor #D5F5E3
   BorderColor #27AE60
@@ -814,71 +1276,63 @@ skinparam class<<metrics>> {
 
 class ExitManager <<risk>> {
   -config: ExitConfig
-  -positions: Dict[str, PositionState]
+  -_states: Dict[str, PositionState]
   --
-  +check_exits(symbol, bar, position): List[Order]
-  +on_fill(fill)
-  +reset()
+  +register_entry(symbol, qty, price, ...)
+  +set_strategy_stop(symbol, stop_price)
+  +check_exit(bar, position, ...): (Order, ExitReason)
+  +check_exit_tick(symbol, tick_price, ...): (Order, ExitReason)
 }
 
 class ExitConfig <<dataclass>> {
-  +take_profit_pct: Optional[float]
-  +stop_loss_pct: Optional[float]
-  +take_profit_usd: Optional[float]
-  +stop_loss_usd: Optional[float]
-  +trailing_stop_pct: Optional[float]
-  +max_holding_bars: Optional[int]
-  +leverage: float
+  +take_profit_pct / take_profit_usd
+  +stop_loss_pct / stop_loss_usd
+  +trailing_stop_pct / max_holding_bars
+  +use_intrabar_checks / leverage
 }
 
 enum ExitReason <<enum>> {
-  TP_USD
-  TP_PCT
-  SL_USD
-  SL_PCT
-  TRAILING
-  MAX_BARS
+  TAKE_PROFIT_USD
+  TAKE_PROFIT_PCT
+  STOP_LOSS_USD
+  STOP_LOSS_PCT
+  TRAILING_STOP
+  MAX_HOLDING_BARS
   LIQUIDATION
+  STRATEGY_STOP
 }
 
 class PositionState <<dataclass>> {
-  +entry_price: float
-  +quantity: float
-  +bars_held: int
-  +peak_price: float
+  +symbol / quantity / avg_entry_price
+  +entry_bar_index / peak_pnl / peak_price
+  +strategy_stop_price: Optional[float]
 }
 
 class BasicRiskManager <<risk>> {
   -limits: RiskLimits
-  -daily_pnl: float
-  -order_count: int
-  -kill_switch: bool
+  -_daily_pnl / _kill_switch_active
   --
   +pre_trade_check(order, portfolio, bar): bool
+  +validate_order_set(orders, ...): bool
   +is_kill_switch_active(): bool
-  +update_daily_pnl(pnl)
-  +reset_daily()
   +get_state(): Dict
 }
 
 class RiskLimits <<dataclass>> {
-  +max_position_size: float
-  +max_daily_loss: float
-  +max_drawdown: float
-  +max_leverage: int
-  +max_orders_per_day: int
+  +max_position_size / max_position_notional
+  +max_daily_loss / max_daily_loss_pct
+  +max_drawdown / max_leverage
+  +max_orders_per_bar
 }
 
 class MetricsSink <<metrics>> {
-  -equity_curve: List
-  -trades: List
-  -bars_processed: int
+  -_equity_curve / _returns: List
+  -_trades / _fills: List
+  -_total_funding_cost / _total_borrow_cost
   --
   +on_bar(bar, equity, position)
-  +on_order(order)
   +on_fill(fill, portfolio_equity)
   +finalize(...): BacktestResult
-  +reset()
 }
 
 ExitManager -[#F39C12]-> ExitConfig
@@ -901,19 +1355,16 @@ skinparam {
   ArrowColor #34495E
   ArrowThickness 1.5
 }
-
 skinparam class<<data>> {
   BackgroundColor #D6EAF8
   BorderColor #2980B9
   HeaderBackgroundColor #AED6F1
 }
-
 skinparam class<<dataclass>> {
   BackgroundColor #FEF9E7
   BorderColor #F39C12
   HeaderBackgroundColor #F9E79F
 }
-
 skinparam class<<error>> {
   BackgroundColor #FADBD8
   BorderColor #E74C3C
@@ -922,41 +1373,42 @@ skinparam class<<error>> {
 
 class TickStore <<data>> {
   -config: TickStoreConfig
-  -layout: str
   --
-  +load(symbol, start_ns, end_ns): Iterator[Tick]
-  -_detect_layout(): str
-  -_load_legacy(symbol): Iterator[Tick]
-  -_load_partitioned(symbol, start, end): Iterator[Tick]
+  +get_storage_layout(symbol): str
+  +iter_ticks(symbol, start_ns, end_ns): Iterator[Tick]
+  +get_available_dates(symbol): List
 }
 
 class TickStoreConfig <<dataclass>> {
-  +data_dir: str
-  +file_pattern: str
-  +validate: bool
-  +deduplicate: bool
+  +data_dir / file_pattern
+  +validate_order / deduplicate
+  +gap_threshold_ns
 }
 
 class DiskTickStreamer <<data>> {
   -tick_store: TickStore
-  -symbols: List[str]
-  -start_ns: int
-  -end_ns: int
+  -_heap   ' min-heap multi-symbol merge
   ==
-  +stream(): Iterator[Tick]
+  +iter_ticks(): Iterator[Tick]
+  +peek_next_timestamp(): Optional[int]
 }
 
 class BarStore <<data>> {
-  -bars: Dict[str, Dict[str, List]]
+  -_data: Dict[(symbol,tf), Dict[str, deque]]
   --
-  +add_bar(symbol, tf, bar_dict)
-  +get_ohlcv(symbol, tf): DataFrame
-  +get_recent(symbol, tf, limit): List[Dict]
+  +add_bar(symbol, tf, k)
+  +get_ohlcv(symbol, tf): Dict
+  +get_recent(symbol, tf, limit): List
+}
+
+class BarSyncBuffer <<data>> {
+  -mode: strict | forward_fill
+  +update(bar)
+  +try_emit(): Optional[MultiBar]
 }
 
 exception TickDataNotFoundError <<error>> {
-  +symbol: str
-  +data_dir: str
+  +symbol / data_dir: str
 }
 
 DiskTickStreamer -[#2980B9]-> TickStore
@@ -969,7 +1421,7 @@ DiskTickStreamer .[#27AE60,dashed].> Tick : yields
 ' ============================================================
 @startuml Class_Backtest_Scoring
 !theme cerulean-outline
-title <size:18>**Backtest - Scoring & Optimization**</size>
+title <size:18>**Backtest - Scoring & Cross-Validation**</size>
 
 skinparam {
   shadowing true
@@ -979,586 +1431,85 @@ skinparam {
   ArrowColor #34495E
   ArrowThickness 1.5
 }
-
 skinparam class<<runner>> {
   BackgroundColor #FADBD8
   BorderColor #E74C3C
   HeaderBackgroundColor #F1948A
 }
-
 skinparam class<<scorer>> {
   BackgroundColor #D5F5E3
   BorderColor #27AE60
   HeaderBackgroundColor #ABEBC6
 }
-
 skinparam class<<dataclass>> {
   BackgroundColor #FEF9E7
   BorderColor #F39C12
   HeaderBackgroundColor #F9E79F
 }
 
-class BacktestRunner <<runner>> {
+class BatchBacktest <<runner>> {
   -config: BacktestConfig
-  -strategy_factory: Callable
+  -strategy_factory: StrategyFactory
+  -scorer: Scorer
   ==
-  +run(): BacktestResult
+  +run(search_space, cv): BatchResult
 }
 
-class BacktestConfig <<dataclass>> {
-  +data_config: DataConfig
-  +strategy_class: str
-  +strategy_params: Dict
-  +initial_capital: float
-  +cost_config: Dict
-  +risk_limits: Dict
+class BatchResult <<dataclass>> {
+  +results / scores / params_list / rankings
+  +cv_method / cv_fold_details
+  +selection_bias_report
+  +top_k() / best_result()
 }
 
-class DataConfig <<dataclass>> {
-  +symbols: List[str]
-  +start_date: str
-  +end_date: str
-  +bar_type: str
-  +bar_param: str
+class BacktestRunner <<runner>> {
+  +run_once(factory, params, name): BacktestResult
 }
 
 class Scorer <<scorer>> {
   -weights: ScorerWeights
+  -min_trades / min_sharpe
   ==
-  +score(result: BacktestResult): float
+  +score(result): float
+  +score_breakdown(result): Dict
 }
 
 class ScorerWeights <<dataclass>> {
-  +sharpe: float
-  +max_drawdown: float
-  +turnover: float
-  +costs: float
-  +min_trades: int
+  +sharpe / max_drawdown / turnover
+  +costs / win_rate / calmar
 }
 
-BacktestRunner -[#E74C3C]-> BacktestConfig
-BacktestConfig -[#F39C12]-> DataConfig
+class SearchSpace <<runner>> {
+  +add(param, values)
+  +add_constraint(fn)
+}
+class ParameterGrid <<runner>> {
+  +from_ranges(...)
+}
+class Selector <<runner>> {
+  +filter(results, criteria): List[RankedResult]
+}
+
+class PurgedKFold <<runner>>
+class WalkForward <<runner>>
+class CPCV <<runner>>
+
+BatchBacktest -[#E74C3C]-> Scorer
+BatchBacktest -[#E74C3C]-> SearchSpace
+BatchBacktest .[#E74C3C,dashed].> ParameterGrid
+BatchBacktest -[#E74C3C]-> BacktestRunner
+BatchBacktest -[#E74C3C]-> BatchResult
+BatchBacktest .[#C0392B,dashed].> PurgedKFold
+BatchBacktest .[#C0392B,dashed].> WalkForward
+BatchBacktest .[#C0392B,dashed].> CPCV
 Scorer -[#F39C12]-> ScorerWeights
-Scorer .[#27AE60,dashed].> BacktestResult : evaluates
-
-@enduml
-
-' ============================================================
-@startuml Class_Strategy
-!theme cerulean-outline
-title <size:18>**Strategy - Implementations**</size>
-
-skinparam {
-  shadowing true
-  defaultFontSize 11
-  classFontSize 13
-  classFontStyle bold
-  ArrowColor #34495E
-  ArrowThickness 1.5
-}
-
-skinparam class<<abstract>> {
-  BackgroundColor #E8DAEF
-  BorderColor #8E44AD
-  HeaderBackgroundColor #D2B4DE
-  FontStyle italic
-}
-
-skinparam class<<strategy>> {
-  BackgroundColor #D5F5E3
-  BorderColor #27AE60
-  HeaderBackgroundColor #ABEBC6
-}
-
-abstract class BinaryBaseStrategy <<abstract>> {
-  #bar_store: BarStore
-  #buffer: DataFrame
-  --
-  +{abstract} _live_signal(o, h, l, c, v): Optional[str]
-  +generate_signal(symbol): Optional[str]
-  +on_bar(bar, ctx): StrategyDecision
-  +reset()
-  +get_exit_params(): Dict
-}
-
-class RSIThresholdStrategy <<strategy>> {
-  -rsi_period: int
-  -rsi_overbought: float
-  -rsi_oversold: float
-  -position_size: float
-  .. exit params ..
-  -take_profit_pct: float
-  -stop_loss_pct: float
-  -trailing_stop_pct: float
-  -max_holding_bars: int
-  .. margin ..
-  -leverage: int
-  -sizing_config: SizingConfig
-  ==
-  +_live_signal(o, h, l, c, v): Optional[str]
-  +on_bar(bar, ctx): StrategyDecision
-}
-
-class DonchianATRVolTargetStrategy <<strategy>> {
-  -dc_period: int
-  -atr_period: int
-  -atr_mult: float
-  -risk_pct: float
-  -position_size: float
-  .. filter ..
-  -filter_type: str
-  -ema_period: int
-  -adx_period: int
-  -adx_threshold: float
-  .. options ..
-  -allow_reversal: bool
-  -max_holding_bars: int
-  ==
-  +on_bar(bar, ctx): StrategyDecision
-}
-
-IStrategy <|--[#8E44AD] BinaryBaseStrategy
-BinaryBaseStrategy <|--[#27AE60] RSIThresholdStrategy
-IStrategy <|--[#8E44AD] DonchianATRVolTargetStrategy
-
-RSIThresholdStrategy .[#7F8C8D,dashed].> ExitManager : uses
-DonchianATRVolTargetStrategy .[#27AE60,dashed].> StrategyDecision : returns
-RSIThresholdStrategy .[#27AE60,dashed].> StrategyDecision : returns
-
-@enduml
-
-' ============================================================
-@startuml Class_Live
-!theme cerulean-outline
-title <size:18>**Live Trading - Components**</size>
-
-skinparam {
-  shadowing true
-  defaultFontSize 11
-  classFontSize 13
-  classFontStyle bold
-  ArrowColor #34495E
-  ArrowThickness 1.5
-}
-
-skinparam class<<engine>> {
-  BackgroundColor #D1F2EB
-  BorderColor #1ABC9C
-  HeaderBackgroundColor #A3E4D7
-}
-
-skinparam class<<broker>> {
-  BackgroundColor #D6EAF8
-  BorderColor #2980B9
-  HeaderBackgroundColor #AED6F1
-}
-
-skinparam class<<abstract>> {
-  BackgroundColor #FADBD8
-  BorderColor #E74C3C
-  HeaderBackgroundColor #F1948A
-  FontStyle italic
-}
-
-class LiveEngine <<engine>> {
-  -broker: IBroker
-  -streamer: IStreamer
-  -bar_store: BarStore
-  -strategy: IStrategy
-  -position_manager: PositionManager
-  -news_engine: Optional[NewsEngine]
-  -signal_combiner: Optional[ISignalCombiner]
-  -global_risk: LiveGlobalRisk
-  ==
-  +start()
-  +stop()
-  -_on_bar(bar)
-  -_process_signal(symbol, signal)
-}
-
-class BinanceBroker <<broker>> {
-  -client: BinanceClient
-  -rate_limiter: AsyncRateLimiter
-  -exchange_info_cache: ExchangeInfoCache
-  --
-  +get_mark_price(symbol): float
-  +market_order(symbol, side, qty)
-  +close_position(symbol)
-  +position_amt(symbol): float
-  +set_leverage(symbol, leverage)
-  +place_stop_market(...)
-  +place_take_profit(...)
-  +get_open_orders(symbol): list
-  +balance(asset): float
-}
-
-class BinanceClient <<broker>> {
-  -async_client: AsyncClient
-  --
-  +futures_exchange_info()
-  +futures_mark_price(symbol)
-  +futures_create_order(**params)
-  +futures_position_information(symbol)
-  +futures_account_balance()
-  +futures_klines(symbol, interval, limit)
-  +futures_change_margin_type(symbol, marginType)
-  +futures_change_leverage(symbol, leverage)
-}
-
-class Streamer <<engine>> {
-  -client: BinanceClient
-  -socket_manager: BinanceSocketManager
-  -bar_store: BarStore
-  -queue: asyncio.Queue
-  -symbols: List[str]
-  -intervals: List[str]
-  --
-  +start()
-  +stop()
-  +get_queue(): asyncio.Queue
-  +preload_history(symbols, intervals, limit, batch)
-}
-
-IBroker <|..[#2980B9] BinanceBroker
-IClient <|..[#2980B9] BinanceClient
-IStreamer <|..[#1ABC9C] Streamer
-BinanceBroker -[#2980B9]-> BinanceClient
-BinanceBroker -[#7F8C8D]-> AsyncRateLimiter
-BinanceBroker -[#7F8C8D]-> ExchangeInfoCache
-LiveEngine -[#1ABC9C]-> IBroker
-LiveEngine -[#1ABC9C]-> IStreamer
-LiveEngine -[#1ABC9C]-> PositionManager
-LiveEngine -[#1ABC9C]-> BarStore
-LiveEngine -[#1ABC9C]-> IStrategy
-LiveEngine -[#1ABC9C]-> LiveGlobalRisk
-
-@enduml
-
-' ============================================================
-@startuml Class_Live_Position
-!theme cerulean-outline
-title <size:18>**Live Trading - Position & Risk Management**</size>
-
-skinparam {
-  shadowing true
-  defaultFontSize 11
-  classFontSize 13
-  classFontStyle bold
-  ArrowColor #34495E
-  ArrowThickness 1.5
-}
-
-skinparam class<<manager>> {
-  BackgroundColor #D1F2EB
-  BorderColor #1ABC9C
-  HeaderBackgroundColor #A3E4D7
-}
-
-skinparam class<<risk>> {
-  BackgroundColor #FADBD8
-  BorderColor #C0392B
-  HeaderBackgroundColor #F1948A
-}
-
-skinparam class<<dataclass>> {
-  BackgroundColor #FEF9E7
-  BorderColor #F39C12
-  HeaderBackgroundColor #F9E79F
-}
-
-skinparam class<<util>> {
-  BackgroundColor #F2F3F4
-  BorderColor #7F8C8D
-  HeaderBackgroundColor #D5D8DC
-}
-
-class PositionManager <<manager>> {
-  -broker: IBroker
-  -config: Dict
-  -positions: Dict[str, LivePosition]
-  --
-  +open_position(symbol, side, qty, price)
-  +close_position(symbol)
-  +update_trailing_stops()
-  +reconcile_positions()
-}
-
-class LivePosition <<dataclass>> {
-  +symbol: str
-  +quantity: float
-  +entry_price: float
-  +side: str
-  +tp_order_id: Optional[str]
-  +sl_order_id: Optional[str]
-  +peak_price: float
-  +trailing_stop_pct: Optional[float]
-}
-
-class LiveGlobalRisk <<risk>> {
-  -state_file: str
-  -max_daily_loss: float
-  -max_drawdown: float
-  -kill_switch: bool
-  -daily_pnl: float
-  -equity_peak: float
-  --
-  +check(pnl: float): bool
-  +is_kill_switch_active(): bool
-  +update_daily_pnl(pnl)
-  +reset_daily()
-  +save_state()
-  +load_state()
-}
-
-class AsyncRateLimiter <<util>> {
-  -max_calls: int
-  -period: float
-  -timestamps: List
-  --
-  +acquire()
-}
-
-class ExchangeInfoCache <<util>> {
-  -cache: Dict
-  -ttl: int
-  --
-  +get(symbol): Dict
-  +refresh()
-}
-
-PositionManager -[#F39C12]-> "*" LivePosition
-PositionManager -[#1ABC9C]-> IBroker
-
-@enduml
-
-' ============================================================
-@startuml Class_Live_Config
-!theme cerulean-outline
-title <size:18>**Live Trading - Configuration**</size>
-
-skinparam {
-  shadowing true
-  defaultFontSize 11
-  classFontSize 13
-  classFontStyle bold
-  ArrowColor #34495E
-  ArrowThickness 1.5
-}
-
-skinparam class<<dataclass>> {
-  BackgroundColor #FEF9E7
-  BorderColor #F39C12
-  HeaderBackgroundColor #F9E79F
-}
-
-skinparam class<<config>> {
-  BackgroundColor #D1F2EB
-  BorderColor #1ABC9C
-  HeaderBackgroundColor #A3E4D7
-}
-
-class SizingConfig <<config>> {
-  +mode: str
-  +leverage: int
-  +fixed_qty: Optional[float]
-  +notional_usd: Optional[float]
-  +margin_usd: Optional[float]
-  ==
-  +compute_qty(price, balance): float
-}
-
-class ExitConfigLive <<dataclass>> {
-  +take_profit_pct: Optional[float]
-  +stop_loss_pct: Optional[float]
-  +trailing_stop_pct: Optional[float]
-}
-
-class RiskConfig <<dataclass>> {
-  +max_position_size: float
-  +max_daily_loss: float
-}
-
-class ExecutionConfig <<dataclass>> {
-  +margin_type: str
-  +preload_bars: int
-}
-
-class SymbolRoute <<config>> {
-  +symbol: str
-  +sizing: SizingConfig
-  +exit_config: ExitConfigLive
-}
-
-class GlobalRiskConfig <<dataclass>> {
-  +max_daily_loss_usd: float
-  +max_drawdown_pct: float
-  +kill_switch_enabled: bool
-}
-
-SymbolRoute -[#1ABC9C]-> SizingConfig
-SymbolRoute -[#F39C12]-> ExitConfigLive
-
-@enduml
-
-' ============================================================
-@startuml Class_News
-!theme cerulean-outline
-title <size:18>**News & Sentiment - Components**</size>
-
-skinparam {
-  shadowing true
-  defaultFontSize 11
-  classFontSize 13
-  classFontStyle bold
-  ArrowColor #34495E
-  ArrowThickness 1.5
-}
-
-skinparam class<<engine>> {
-  BackgroundColor #FDEBD0
-  BorderColor #E67E22
-  HeaderBackgroundColor #F5CBA7
-}
-
-skinparam class<<impl>> {
-  BackgroundColor #D5F5E3
-  BorderColor #27AE60
-  HeaderBackgroundColor #ABEBC6
-}
-
-skinparam class<<mock>> {
-  BackgroundColor #F2F3F4
-  BorderColor #7F8C8D
-  HeaderBackgroundColor #D5D8DC
-}
-
-skinparam class<<abstract>> {
-  BackgroundColor #FADBD8
-  BorderColor #E74C3C
-  HeaderBackgroundColor #F1948A
-  FontStyle italic
-}
-
-class NewsEngine <<engine>> {
-  -news_source: INewsSource
-  -sentiment_analyzer: ISentimentAnalyzer
-  -cache: Dict[str, float]
-  -refresh_interval: int
-  --
-  +get_sentiment(symbol: str): float
-  +prefetch(symbols: List[str])
-  -_fetch_and_analyze(symbol): float
-}
-
-class CryptoCompareNewsSource <<impl>> {
-  -api_key: str
-  -base_url: str
-  --
-  +fetch_news(symbol, limit): List[NewsArticle]
-}
-
-class MockNewsSource <<mock>> {
-  -articles: List[NewsArticle]
-  --
-  +fetch_news(symbol, limit): List[NewsArticle]
-}
-
-class OpenAISentimentAnalyzer <<impl>> {
-  -client: OpenAI
-  -model: str
-  -cache: Dict
-  --
-  +analyze(texts, symbol): float
-}
-
-class GeminiSentimentAnalyzer <<impl>> {
-  -client: genai.Client
-  -model: str
-  -cache: Dict
-  --
-  +analyze(texts, symbol): float
-}
-
-class BinarySignalCombiner <<impl>> {
-  -buy_threshold: float
-  -sell_threshold: float
-  ==
-  +combine(strategy_signal,\n  sentiment_score): Optional[int]
-}
-
-INewsSource <|..[#27AE60] CryptoCompareNewsSource
-INewsSource <|..[#7F8C8D] MockNewsSource
-ISentimentAnalyzer <|..[#27AE60] OpenAISentimentAnalyzer
-ISentimentAnalyzer <|..[#27AE60] GeminiSentimentAnalyzer
-ISignalCombiner <|..[#27AE60] BinarySignalCombiner
-NewsEngine -[#E67E22]-> INewsSource
-NewsEngine -[#E67E22]-> ISentimentAnalyzer
-
-@enduml
-
-' ============================================================
-@startuml Class_Utils
-!theme cerulean-outline
-title <size:18>**Utils - Utility Components**</size>
-
-skinparam {
-  shadowing true
-  defaultFontSize 11
-  classFontSize 13
-  classFontStyle bold
-  ArrowColor #34495E
-  ArrowThickness 1.5
-}
-
-skinparam class<<data>> {
-  BackgroundColor #D6EAF8
-  BorderColor #2980B9
-  HeaderBackgroundColor #AED6F1
-}
-
-skinparam class<<dataclass>> {
-  BackgroundColor #FEF9E7
-  BorderColor #F39C12
-  HeaderBackgroundColor #F9E79F
-}
-
-skinparam class<<util>> {
-  BackgroundColor #F2F3F4
-  BorderColor #7F8C8D
-  HeaderBackgroundColor #D5D8DC
-}
-
-class BarStore <<data>> {
-  -bars: Dict[str, Dict[str, List]]
-  --
-  +add_bar(symbol: str, tf: str, bar_dict: Dict)
-  +get_ohlcv(symbol: str, tf: str): DataFrame
-  +get_recent(symbol: str, tf: str, limit: int): List[Dict]
-}
-
-class LeverageConfig <<dataclass>> {
-  +leverage: int
-  +margin_type: str
-}
-
-class "leverage_utils" as LU <<util>> {
-  +calculate_notional(qty, price): float
-  +calculate_margin_required(notional, leverage): float
-  +calculate_unrealized_pnl(qty, entry, current, side): float
-  +calculate_pnl_percentage(pnl, margin): float
-  +calculate_liquidation_price(entry, qty, margin, side): float
-  +is_liquidation_triggered(current, liquidation, side): bool
-  +calculate_position_size_from_notional(notional, price): float
-  +calculate_position_size_from_margin(margin, price, leverage): float
-  +calculate_fee(notional, rate): float
-  +get_effective_exposure(qty, price, leverage): Dict
-  +validate_order_against_limits(order, limits): bool
-}
-
-class "logger" as LOG <<util>> {
-  +log(level: str, message: str)
-  +setup_logger(name: str, level: str): Logger
-}
+Selector .[#27AE60,dashed].> BatchResult : filters
+
+note bottom of Scorer #FEF9E7
+  AFML-aware: deflated Sharpe +
+  selection-bias warning on
+  multi-trial parameter sweeps.
+end note
 
 @enduml
 
@@ -1575,13 +1526,11 @@ skinparam {
   ArrowColor #34495E
   ArrowThickness 1.5
 }
-
 skinparam class<<main>> {
   BackgroundColor #FADBD8
   BorderColor #E74C3C
   HeaderBackgroundColor #F1948A
 }
-
 skinparam class<<dataclass>> {
   BackgroundColor #FEF9E7
   BorderColor #F39C12
@@ -1589,41 +1538,562 @@ skinparam class<<dataclass>> {
 }
 
 class RealismConfig <<main>> {
-  +transaction_cost: TransactionCostConfig
+  +transaction_costs: TransactionCostConfig
   +funding: FundingConfig
   +borrow: BorrowConfig
+  +partial_fills: PartialFillConfigDTO
+  +cv_enabled / cv_method / cv_n_splits
+  --
+  +from_dict(d) / from_yaml(path)
 }
 
 class TransactionCostConfig <<dataclass>> {
-  +fee_model: str
-  +maker_fee: float
-  +taker_fee: float
+  +fee_model / maker_fee_bps / taker_fee_bps
   .. slippage ..
-  +slippage_model: str
-  +slippage_bps: float
-  .. spread ..
-  +spread_model: str
-  +spread_bps: float
-  .. latency ..
-  +latency_model: str
-  +latency_base_ns: int
-  +latency_jitter_ns: int
+  +slippage_model / slippage_bps
+  +slippage_noise / sigma
+  .. spread / latency ..
+  +spread_model / spread_bps
+  +latency_model / Poisson spikes
+  +price_latency_mode   ' A2
+  +per_symbol_overrides: Dict
+  --
+  +for_symbol(symbol): TransactionCostConfig
 }
 
 class FundingConfig <<dataclass>> {
-  +enabled: bool
-  +rate: float
-  +interval_hours: int
+  +enabled / funding_interval_hours
+  +funding_rate_mode   ' constant | series
+  +funding_rate / series_csv_path
 }
 
 class BorrowConfig <<dataclass>> {
-  +enabled: bool
-  +annual_rate: float
+  +enabled / annual_borrow_rate
+  +charge_interval   ' bar | daily | hourly
+}
+
+class PartialFillConfigDTO <<dataclass>> {
+  +enabled / liquidity_scale / min_fill_ratio
 }
 
 RealismConfig -[#E74C3C]-> TransactionCostConfig
 RealismConfig -[#E74C3C]-> FundingConfig
 RealismConfig -[#E74C3C]-> BorrowConfig
+RealismConfig -[#E74C3C]-> PartialFillConfigDTO
+
+@enduml
+
+' ============================================================
+@startuml Class_Live
+!theme cerulean-outline
+title <size:18>**Live Trading - Engine, Brokers & Streamers**</size>
+
+skinparam {
+  shadowing true
+  defaultFontSize 11
+  classFontSize 13
+  classFontStyle bold
+  ArrowColor #34495E
+  ArrowThickness 1.5
+}
+skinparam class<<engine>> {
+  BackgroundColor #D1F2EB
+  BorderColor #1ABC9C
+  HeaderBackgroundColor #A3E4D7
+}
+skinparam class<<broker>> {
+  BackgroundColor #D6EAF8
+  BorderColor #2980B9
+  HeaderBackgroundColor #AED6F1
+}
+skinparam class<<abstract>> {
+  BackgroundColor #FADBD8
+  BorderColor #E74C3C
+  HeaderBackgroundColor #F1948A
+  FontStyle italic
+}
+
+class LiveEngine <<engine>> {
+  -cfg: LiveConfig
+  -broker: IBroker
+  -global_risk: LiveGlobalRisk
+  -_rejection_counter: RejectionCounter
+  -bar_store: BarStore
+  -strategy: IStrategy
+  -supervisor: LiveSupervisor
+  -streamer: Streamer
+  -tick_streamer: MarkPriceTickStreamer
+  -metrics: LiveMetrics
+  -notifier: TelegramNotifier
+  -news_engine: Optional[NewsEngine]
+  -margin_adjuster: Optional[IMarginAdjuster]
+  ==
+  +run(): async
+  -_reconciliation_loop()
+  -_apply_realised_costs(pos)
+}
+
+abstract class IBroker <<abstract>>
+abstract class IClient <<abstract>>
+abstract class IStreamer <<abstract>>
+
+class BinanceBroker <<broker>> {
+  -_client: IClient
+  -_rl: AsyncRateLimiter
+  -_ei_cache: ExchangeInfoCache
+  -_rejection_counter: RejectionCounter
+  --
+  +get_mark_price(symbol): float
+  +market_order(symbol, side, qty)
+  +place_stop_market / place_take_profit
+  +wait_for_fill(symbol, id, timeout): dict
+  +get_24h_volume(symbol): float
+  +get_realised_commission / get_funding_paid
+}
+
+class DryBroker <<broker>> {
+  -_balance / _positions / _prices
+  -_market_client: IClient
+  --
+  +market_order(...)   ' instant paper fill
+  +set_price(symbol, price)
+  +wait_for_fill(...)  ' synthetic
+}
+
+class BinanceClient <<broker>> {
+  -_client: AsyncClient
+  --
+  +futures_create_order(**kwargs)
+  +futures_klines(...)
+  +futures_position_information(symbol)
+}
+
+class Streamer <<engine>> {
+  -bsm: BinanceSocketManager
+  -bar_store: BarStore
+  -queue: asyncio.Queue
+  --
+  +start_buffering() / preload_history()
+  +flush_buffer() / get_queue()
+  +seconds_since_last_message: float
+}
+
+class MarkPriceTickStreamer <<engine>> {
+  -on_tick: callback
+  -source: mark | book
+  --
+  +start() / stop()
+  +get_spread_bps(symbol): float
+}
+
+IBroker <|..[#2980B9] BinanceBroker
+IBroker <|..[#2980B9] DryBroker
+IClient <|..[#2980B9] BinanceClient
+IStreamer <|..[#1ABC9C] Streamer
+BinanceBroker -[#2980B9]-> IClient
+DryBroker .[#2980B9,dashed].> IClient
+LiveEngine -[#1ABC9C]-> IBroker
+LiveEngine -[#1ABC9C]-> IStreamer
+LiveEngine -[#1ABC9C]-> MarkPriceTickStreamer
+
+@enduml
+
+' ============================================================
+@startuml Class_Live_Supervisor_Position
+!theme cerulean-outline
+title <size:18>**Live Trading - Supervisor, Position & Risk**</size>
+
+skinparam {
+  shadowing true
+  defaultFontSize 11
+  classFontSize 13
+  classFontStyle bold
+  ArrowColor #34495E
+  ArrowThickness 1.5
+}
+skinparam class<<manager>> {
+  BackgroundColor #D1F2EB
+  BorderColor #1ABC9C
+  HeaderBackgroundColor #A3E4D7
+}
+skinparam class<<risk>> {
+  BackgroundColor #FADBD8
+  BorderColor #C0392B
+  HeaderBackgroundColor #F1948A
+}
+skinparam class<<dataclass>> {
+  BackgroundColor #FEF9E7
+  BorderColor #F39C12
+  HeaderBackgroundColor #F9E79F
+}
+skinparam class<<util>> {
+  BackgroundColor #F2F3F4
+  BorderColor #7F8C8D
+  HeaderBackgroundColor #D5D8DC
+}
+
+class LiveSupervisor <<manager>> {
+  -managers: Dict[str, PositionManager]
+  --
+  +reconcile_on_start()
+  +position_qty_for(symbol, strategy): float
+}
+
+class PositionManager <<manager>> {
+  -broker: IBroker
+  -sizing_cfg / exit_cfg / execution_cfg
+  -open_positions: Dict[tuple, Position]
+  -history: List[Position]
+  --
+  +position_qty(symbol): float
+  +position_qty_for(symbol, strategy): float
+}
+
+class Position <<dataclass>> {
+  +symbol / side / qty / entry
+  +sl / tp: Optional[float]
+  +sl_order_id / tp_order_id: int
+  +peak_price / peak_pnl
+  +slippage_bps / entry_fee_usd / funding_usd
+  --
+  +unrealized_pnl(price): float
+  +update_peak(price)
+}
+
+class PositionStore <<util>> {
+  -_path: str
+  +save(positions) / load() / clear()
+}
+
+class LiveGlobalRisk <<risk>> {
+  -cfg: GlobalRiskConfig
+  -_kill_switch: bool
+  -_daily_pnl / _peak_equity
+  -_consecutive_losses / _cooldown_until_ts
+  --
+  +check_account_risk(equity, exposure, n): (bool, str)
+  +record_pnl(pnl)
+  +trip_kill_switch(reason)
+}
+
+class RejectionCounter <<risk>> {
+  -max_count / window_seconds
+  +record(reason): bool
+  +tripped: bool
+}
+
+class AsyncRateLimiter <<util>> {
+  -_max: int
+  +acquire(weight)
+}
+class ExchangeInfoCache <<util>> {
+  -_ttl: int
+  +get(fetch_fn): Dict
+}
+
+LiveSupervisor o-[#1ABC9C]-> "*" PositionManager
+LiveSupervisor .[#7F8C8D,dashed].> PositionStore
+PositionManager -[#F39C12]-> "*" Position
+PositionManager -[#1ABC9C]-> IBroker
+
+@enduml
+
+' ============================================================
+@startuml Class_Live_Observability
+!theme cerulean-outline
+title <size:18>**Live Trading - Observability**</size>
+
+skinparam {
+  shadowing true
+  defaultFontSize 11
+  classFontSize 13
+  classFontStyle bold
+  ArrowColor #34495E
+  ArrowThickness 1.5
+}
+skinparam class<<obs>> {
+  BackgroundColor #D1F2EB
+  BorderColor #1ABC9C
+  HeaderBackgroundColor #A3E4D7
+}
+
+class LiveMetrics <<obs>> {
+  -_csv_path: str
+  -_stats: _RunningStats
+  --
+  +record(pos: Position)   ' append CSV row
+  +update_equity(equity)
+  +log_daily_summary()
+  +snapshot(): Dict
+}
+
+class TelegramNotifier <<obs>> {
+  -_token / _chat_id / _enabled
+  --
+  +try_send(text)
+  +position_opened() / position_closed()
+  +kill_switch() / daily_summary()
+  +notify_drift() / notify_rejection_storm()
+  +notify_heartbeat_lost()
+}
+
+note bottom of LiveMetrics #EBF5FB
+  CSV columns include Phase B2/B4 fields:
+  slippage_bps, entry_fee_usd, exit_fee_usd,
+  funding_usd, pnl_gross_usd, pnl_net_usd.
+end note
+
+@enduml
+
+' ============================================================
+@startuml Class_Live_Config
+!theme cerulean-outline
+title <size:18>**Live Trading - Configuration**</size>
+
+skinparam {
+  shadowing true
+  defaultFontSize 11
+  classFontSize 13
+  classFontStyle bold
+  ArrowColor #34495E
+  ArrowThickness 1.5
+}
+skinparam class<<dataclass>> {
+  BackgroundColor #FEF9E7
+  BorderColor #F39C12
+  HeaderBackgroundColor #F9E79F
+}
+skinparam class<<config>> {
+  BackgroundColor #D1F2EB
+  BorderColor #1ABC9C
+  HeaderBackgroundColor #A3E4D7
+}
+
+class LiveConfig <<config>> {
+  +strategy_class / symbols / timeframe
+  +symbol_routes: List[SymbolRoute]
+  --
+  +sizing_for(symbol): SizingConfig
+  +exit_for(symbol): ExitConfig
+  +leverage_for(symbol): int
+  +from_yaml(path) / from_json(path)
+  +effective_run_id() / trade_log_path()
+}
+
+class SizingConfig <<config>> {
+  +mode / leverage / leverage_mode
+  +fixed_qty / notional_usd / margin_usd
+  +compute_qty(price): float
+}
+class ExitConfig <<dataclass>> {
+  +take_profit_pct/usd / stop_loss_pct/usd
+  +trailing_stop_pct / max_holding_bars
+  +use_exchange_orders
+}
+class RiskConfig <<dataclass>> {
+  +max_position_size / max_position_notional
+  +max_daily_loss / max_leverage
+  +max_concurrent_positions
+}
+class ExecutionConfig <<dataclass>> {
+  +margin_type / preload_bars
+  +max_entry_spread_bps   ' Phase B1
+  +max_slippage_bps       ' Phase B2
+  +max_tick_age_seconds   ' Phase E1
+}
+class NewsConfig <<dataclass>> {
+  +enabled / sentiment_provider
+  +refresh_interval / news_limit
+  +margin_boost_max
+}
+class GlobalRiskConfig <<dataclass>> {
+  +max_daily_loss (USD/%) / max_account_drawdown_pct
+  +max_concurrent_positions / cooldown
+}
+class LiquidationGuardConfig <<dataclass>> {
+  +enabled / buffer_pct
+  +action   ' close | alarm
+}
+class SymbolRoute <<config>> {
+  +symbol / leverage / margin_usd
+  +sizing: SizingConfig
+  +exit: ExitConfig
+  +enabled: bool
+}
+
+LiveConfig -[#1ABC9C]-> "*" SymbolRoute
+LiveConfig -[#1ABC9C]-> SizingConfig
+LiveConfig -[#F39C12]-> ExitConfig
+LiveConfig -[#F39C12]-> RiskConfig
+LiveConfig -[#F39C12]-> ExecutionConfig
+LiveConfig -[#F39C12]-> NewsConfig
+LiveConfig -[#F39C12]-> GlobalRiskConfig
+LiveConfig -[#F39C12]-> LiquidationGuardConfig
+SymbolRoute -[#1ABC9C]-> SizingConfig
+SymbolRoute -[#F39C12]-> ExitConfig
+
+@enduml
+
+' ============================================================
+@startuml Class_News
+!theme cerulean-outline
+title <size:18>**News & Sentiment - Components**</size>
+
+skinparam {
+  shadowing true
+  defaultFontSize 11
+  classFontSize 13
+  classFontStyle bold
+  ArrowColor #34495E
+  ArrowThickness 1.5
+}
+skinparam class<<engine>> {
+  BackgroundColor #FDEBD0
+  BorderColor #E67E22
+  HeaderBackgroundColor #F5CBA7
+}
+skinparam class<<impl>> {
+  BackgroundColor #D5F5E3
+  BorderColor #27AE60
+  HeaderBackgroundColor #ABEBC6
+}
+skinparam class<<abstract>> {
+  BackgroundColor #FADBD8
+  BorderColor #E74C3C
+  HeaderBackgroundColor #F1948A
+  FontStyle italic
+}
+
+abstract class INewsSource <<abstract>> {
+  +fetch_news(symbol, limit): List[NewsArticle]
+}
+abstract class ISentimentAnalyzer <<abstract>> {
+  +analyze(texts, symbol): float
+}
+abstract class IMarginAdjuster <<abstract>> {
+  +compute_margin_multiplier(direction, sentiment): float
+}
+
+class NewsEngine <<engine>> {
+  -news_source: INewsSource
+  -sentiment_analyzer: ISentimentAnalyzer
+  -refresh_interval / news_limit
+  -_cache: Dict[str, Dict]
+  --
+  +get_sentiment(symbol, force_refresh): float
+  +prefetch_symbols(symbols)
+}
+
+class CryptoCompareNewsSource <<impl>> {
+  -api_key / base_url
+  +fetch_news(symbol, limit): List[NewsArticle]
+}
+class DDGNewsSource <<impl>> {
+  -ddgs: DDGS
+  +fetch_news(symbol, limit): List[NewsArticle]
+}
+class OpenAISentimentAnalyzer <<impl>> {
+  -model: str
+  -_cache: Dict
+  +analyze(texts, symbol): float
+}
+class GeminiSentimentAnalyzer <<impl>> {
+  -model_name: gemini-2.5-flash
+  -_cache: Dict
+  +analyze(texts, symbol): float
+}
+class SentimentMarginAdjuster <<impl>> {
+  -high/low_sentiment_threshold
+  -margin_boost_max: 0.5
+  +compute_margin_multiplier(direction, sentiment): float
+}
+
+INewsSource <|..[#27AE60] CryptoCompareNewsSource
+INewsSource <|..[#27AE60] DDGNewsSource
+ISentimentAnalyzer <|..[#27AE60] OpenAISentimentAnalyzer
+ISentimentAnalyzer <|..[#27AE60] GeminiSentimentAnalyzer
+IMarginAdjuster <|..[#27AE60] SentimentMarginAdjuster
+NewsEngine -[#E67E22]-> INewsSource
+NewsEngine -[#E67E22]-> ISentimentAnalyzer
+
+note bottom of SentimentMarginAdjuster #FEF9E7
+  LONG + bullish (>0.75) → margin x(1+boost)
+  SHORT + bearish (<0.25) → margin x(1+boost)
+  otherwise → x1.0 (no change).
+  Sizing boost, <b>not</b> signal gating.
+end note
+
+@enduml
+
+' ============================================================
+@startuml Class_Utils
+!theme cerulean-outline
+title <size:18>**Utils - Utility Components**</size>
+
+skinparam {
+  shadowing true
+  defaultFontSize 11
+  classFontSize 13
+  classFontStyle bold
+  ArrowColor #34495E
+  ArrowThickness 1.5
+}
+skinparam class<<dataclass>> {
+  BackgroundColor #FEF9E7
+  BorderColor #F39C12
+  HeaderBackgroundColor #F9E79F
+}
+skinparam class<<util>> {
+  BackgroundColor #F2F3F4
+  BorderColor #7F8C8D
+  HeaderBackgroundColor #D5D8DC
+}
+skinparam class<<data>> {
+  BackgroundColor #D6EAF8
+  BorderColor #2980B9
+  HeaderBackgroundColor #AED6F1
+}
+
+class SupportResistanceTracker <<data>> {
+  -window / num_levels
+  +update(bar)
+  +get_levels(): SupportResistanceResult
+}
+class SupportResistanceResult <<dataclass>> {
+  +levels / supports / resistances: List[float]
+  +method: str
+}
+
+class LeverageConfig <<dataclass>> {
+  +leverage / taker_fee_bps / maker_fee_bps
+  +maintenance_margin_ratio
+  +initial_margin_rate / maintenance_margin_rate
+}
+
+class "levels" as LVL <<util>> {
+  +compute_pivot_levels(...): SupportResistanceResult
+  +detect_swing_levels(...): SupportResistanceResult
+  +cluster_levels(levels, tol): List
+  +find_nearest_level(price, levels, dir): float
+}
+
+class "leverage_utils" as LU <<util>> {
+  +calculate_notional(qty, price): float
+  +calculate_margin_required(qty, price, lev): float
+  +calculate_unrealized_pnl(qty, entry, current): float
+  +calculate_liquidation_price(...): float
+  +is_liquidation_triggered(...): bool
+  +calculate_position_size_from_margin(margin, price, lev): float
+  +validate_order_against_limits(...): tuple
+}
+
+class "logger" as LOG <<util>> {
+  +log(level, message)
+  +setup_logger(name, level): Logger
+}
+
+LVL .[#2980B9,dashed].> SupportResistanceResult : produces
+SupportResistanceTracker -[#2980B9]-> SupportResistanceResult
 
 @enduml
 
@@ -1639,78 +2109,76 @@ skinparam {
   sequenceArrowThickness 2
   maxMessageSize 200
 }
-
 skinparam participant {
   FontSize 12
   FontStyle bold
 }
-
 skinparam sequence {
   LifeLineBorderColor #2C3E50
   LifeLineBackgroundColor #F8F9F9
-  BoxBorderColor #2C3E50
-  BoxBackgroundColor #EBF5FB
-  DividerBackgroundColor #D5DBDB
   GroupBorderColor #2980B9
   GroupHeaderFontSize 12
 }
 
 actor "Trader" as User #F9E79F
-participant "BacktestRunner" as Runner #F1948A
+participant "app.py" as CLI #FAD7A0
+participant "BacktestService" as Svc #F7DC6F
+participant "StrategyFactory" as SF #FCF3CF
 participant "BacktestEngine" as Engine #FADBD8
 participant "DiskTickStreamer" as Streamer #AED6F1
 participant "BarBuilder" as BB #D6EAF8
-participant "BarStore" as BS #D6EAF8
 participant "IStrategy" as Strat #D2B4DE
 participant "RiskManager" as Risk #F1948A
 participant "ExecutionModel" as Exec #ABEBC6
 participant "Portfolio" as Port #F9E79F
 participant "MetricsSink" as Metrics #ABEBC6
 
-User -[#E74C3C]> Runner: run(config)
-activate Runner #FADBD8
-Runner -[#E74C3C]> Engine: create & configure
+User -[#E67E22]> CLI: backtest --strategy ...
+CLI -[#D4AC0D]> Svc: run_single(config)
+activate Svc #F7DC6F
+Svc -[#D4AC0D]> SF: resolve_class(name)
+SF --[#D4AC0D]> Svc: strategy instance
+Svc -[#E74C3C]> Engine: run(strategy, sizing)
 activate Engine #FADBD8
 
 loop #EBF5FB for each Tick
   Engine -[#2980B9]> Streamer: next tick
   Streamer --[#2980B9]> Engine: Tick
-  Engine -[#2980B9]> BB: process_tick(tick)
+  Engine -[#2980B9]> BB: on_tick(tick)
 
   alt #D5F5E3 bar completed
     BB --[#27AE60]> Engine: Bar
-    Engine -[#2980B9]> BS: add_bar(symbol, tf, bar)
     Engine -[#8E44AD]> Strat: on_bar(bar, ctx)
-    Strat --[#8E44AD]> Engine: StrategyDecision
+    Strat --[#8E44AD]> Engine: StrategyDecision (orders)
 
-    loop #FEF9E7 for each Order in decision
+    loop #FEF9E7 for each Order
       Engine -[#C0392B]> Risk: pre_trade_check(order)
       Risk --[#C0392B]> Engine: approved?
-
       alt #D5F5E3 approved
-        Engine -[#27AE60]> Exec: fill_order(order, bar)
+        Engine -[#27AE60]> Exec: process_orders(order, bar)
         Exec --[#27AE60]> Engine: Fill
         Engine -[#F39C12]> Port: apply_fill(fill)
         Engine -[#27AE60]> Metrics: on_fill(fill, equity)
       end
     end
 
+    Engine -[#27AE60]> Engine: _check_tick_exit (TP/SL/trail)
     Engine -[#27AE60]> Metrics: on_bar(bar, equity, position)
   end
 end
 
 Engine -[#27AE60]> Metrics: finalize()
-Metrics --[#27AE60]> Runner: BacktestResult
+Metrics --[#27AE60]> Svc: BacktestResult
 deactivate Engine
-Runner --[#E74C3C]> User: BacktestResult
-deactivate Runner
+Svc --[#D4AC0D]> User: print_result()
+deactivate Svc
 
 @enduml
 
 ' ============================================================
-@startuml Sequence_LiveTrading
+@startuml Sequence_Sweep
 !theme cerulean-outline
-title <size:18>**Sequence Diagram - Live Trading Flow**</size>
+title <size:18>**Sequence Diagram - Parameter Sweep / CV**</size>
 
 skinparam {
   shadowing true
@@ -1719,12 +2187,65 @@ skinparam {
   sequenceArrowThickness 2
   maxMessageSize 200
 }
-
 skinparam participant {
   FontSize 12
   FontStyle bold
 }
+skinparam sequence {
+  LifeLineBorderColor #2C3E50
+  LifeLineBackgroundColor #F8F9F9
+  GroupBorderColor #C0392B
+  GroupHeaderFontSize 12
+}
 
+actor "Trader" as User #F9E79F
+participant "app.py" as CLI #FAD7A0
+participant "SweepService" as Svc #F7DC6F
+participant "SearchSpace" as SS #F5B7B1
+participant "BatchBacktest" as Batch #F1948A
+participant "BacktestRunner" as Runner #FADBD8
+participant "Scorer" as Scorer #ABEBC6
+participant "Selector" as Sel #ABEBC6
+
+User -[#E67E22]> CLI: sweep --param-grid grid.yaml
+CLI -[#D4AC0D]> Svc: run_sweep(grid, constraints)
+activate Svc #F7DC6F
+Svc -[#C0392B]> SS: build grid + constraints
+Svc -[#C0392B]> Batch: run(search_space, cv)
+activate Batch #F5B7B1
+loop #FDEDEC for each param combo
+  loop #FEF9E7 for each CV fold (purged / WF / CPCV)
+    Batch -[#E74C3C]> Runner: run_once(params)
+    Runner --[#E74C3C]> Batch: BacktestResult
+  end
+  Batch -[#27AE60]> Scorer: score(result)
+  Scorer --[#27AE60]> Batch: composite score (+ deflated Sharpe)
+end
+Batch --[#C0392B]> Svc: BatchResult (ranked)
+deactivate Batch
+Svc -[#27AE60]> Sel: filter(results, criteria)
+Sel --[#27AE60]> Svc: top-N RankedResult
+Svc --[#D4AC0D]> User: print_top_results + CSV
+deactivate Svc
+
+@enduml
+
+' ============================================================
+@startuml Sequence_LiveTrading
+!theme cerulean-outline
+title <size:18>**Sequence Diagram - Live / Dry-Run Flow**</size>
+
+skinparam {
+  shadowing true
+  defaultFontSize 11
+  sequenceMessageAlign center
+  sequenceArrowThickness 2
+  maxMessageSize 200
+}
+skinparam participant {
+  FontSize 12
+  FontStyle bold
+}
 skinparam sequence {
   LifeLineBorderColor #2C3E50
   LifeLineBackgroundColor #F8F9F9
@@ -1733,60 +2254,59 @@ skinparam sequence {
 }
 
 actor "Trader" as User #F9E79F
-participant "app.py" as Runner #FAD7A0
+participant "app.py" as CLI #FAD7A0
+participant "LiveService" as Svc #F7DC6F
+participant "BrokerFactory" as BF #FCF3CF
 participant "LiveEngine" as Engine #A3E4D7
 participant "Streamer" as Stream #AED6F1
-participant "BarStore" as BS #D6EAF8
 participant "IStrategy" as Strat #D2B4DE
 participant "NewsEngine" as News #F5CBA7
-participant "SignalCombiner" as Combiner #F5CBA7
-participant "PositionManager" as PM #A3E4D7
-participant "BinanceBroker" as Broker #AED6F1
+participant "MarginAdjuster" as MA #F5CBA7
 participant "GlobalRisk" as GRisk #F1948A
+participant "LiveSupervisor" as Sup #A3E4D7
+participant "Broker" as Broker #AED6F1
 
-User -[#E67E22]> Runner: start
-activate Runner #FDEBD0
-Runner -[#1ABC9C]> Engine: create(config)
+User -[#E67E22]> CLI: live --config / dry-run
+CLI -[#E74C3C]> CLI: validate(real_money) + promotion stamp
+CLI -[#D4AC0D]> Svc: run(config, dry_run)
+activate Svc #F7DC6F
+Svc -[#D4AC0D]> BF: create(mode, cfg)
+BF --[#D4AC0D]> Svc: IBroker (Binance | Dry)
+Svc -[#1ABC9C]> Engine: run()
 activate Engine #D1F2EB
-Engine -[#2980B9]> Stream: start()
-Engine -[#2980B9]> Stream: preload_history()
+Engine -[#2980B9]> Stream: start_buffering / preload_history / flush
 
 loop #E8F8F5 async event loop
-  Stream -[#2980B9]> BS: add_bar(completed bar)
-  Stream -[#1ABC9C]> Engine: bar event via queue
-
-  Engine -[#8E44AD]> Strat: generate_signal(symbol)
-  Strat --[#8E44AD]> Engine: signal (BUY/SELL/None)
+  Stream -[#1ABC9C]> Engine: completed bar (via queue)
+  Engine -[#8E44AD]> Strat: on_bar(symbol) -> signal
 
   alt #FEF9E7 news enabled
     Engine -[#E67E22]> News: get_sentiment(symbol)
-    News --[#E67E22]> Engine: sentiment score
-    Engine -[#E67E22]> Combiner: combine(signal, sentiment)
-    Combiner --[#E67E22]> Engine: final_signal
+    News --[#E67E22]> Engine: score [0..1]
+    Engine -[#E67E22]> MA: compute_margin_multiplier(dir, score)
+    MA --[#E67E22]> Engine: margin x (1.0 .. 1.5)
   end
 
   alt #D5F5E3 signal exists
-    Engine -[#C0392B]> GRisk: check()
+    Engine -[#C0392B]> GRisk: check_account_risk()
     GRisk --[#C0392B]> Engine: allowed?
-
     alt #D5F5E3 allowed
-      Engine -[#1ABC9C]> PM: open_position(symbol, side, qty, price)
-      PM -[#2980B9]> Broker: market_order(symbol, side, qty)
-      PM -[#2980B9]> Broker: place_stop_market(...)
-      PM -[#2980B9]> Broker: place_take_profit(...)
+      Engine -[#1ABC9C]> Sup: open_position(symbol, side, margin)
+      Sup -[#2980B9]> Broker: market_order(...)
+      Sup -[#2980B9]> Broker: place_stop_market / take_profit
     end
   end
 end
 
 deactivate Engine
-deactivate Runner
+deactivate Svc
 
 @enduml
 
 ' ============================================================
 @startuml Sequence_NewsSentiment
 !theme cerulean-outline
-title <size:18>**Sequence Diagram - News Sentiment Analysis**</size>
+title <size:18>**Sequence Diagram - News Sentiment -> Margin**</size>
 
 skinparam {
   shadowing true
@@ -1795,12 +2315,10 @@ skinparam {
   sequenceArrowThickness 2
   maxMessageSize 200
 }
-
 skinparam participant {
   FontSize 12
   FontStyle bold
 }
-
 skinparam sequence {
   LifeLineBorderColor #2C3E50
   LifeLineBackgroundColor #F8F9F9
@@ -1812,13 +2330,13 @@ participant "LiveEngine" as Engine #A3E4D7
 participant "NewsEngine" as NE #F5CBA7
 participant "INewsSource" as Source #ABEBC6
 participant "ISentimentAnalyzer" as SA #D2B4DE
-participant "SignalCombiner" as SC #F5CBA7
+participant "MarginAdjuster" as MA #F5CBA7
 
 Engine -[#E67E22]> NE: get_sentiment("BTCUSDT")
 activate NE #FDEBD0
 
 alt #FEF9E7 cache miss or expired
-  NE -[#27AE60]> Source: fetch_news("BTCUSDT", limit=10)
+  NE -[#27AE60]> Source: fetch_news("BTCUSDT", limit=5)
   activate Source #D5F5E3
   Source --[#27AE60]> NE: List[NewsArticle]
   deactivate Source
@@ -1828,31 +2346,31 @@ alt #FEF9E7 cache miss or expired
   activate SA #E8DAEF
   SA --[#8E44AD]> NE: sentiment_score (0.0 - 1.0)
   deactivate SA
-  NE -[#E67E22]> NE: cache result
+  NE -[#E67E22]> NE: cache result (TTL)
 end
 
 NE --[#E67E22]> Engine: sentiment_score
 deactivate NE
 
-Engine -[#E67E22]> SC: combine(strategy_signal=BUY, sentiment=0.75)
-activate SC #FDEBD0
+Engine -[#E67E22]> MA: compute_margin_multiplier(direction=LONG, sentiment=0.80)
+activate MA #FDEBD0
 
-alt #D5F5E3 BUY + sentiment > 0.6
-  SC --[#27AE60]> Engine: **+1 (LONG)**
-else #FADBD8 SELL + sentiment < 0.4
-  SC --[#C0392B]> Engine: **-1 (SHORT)**
-else #F2F3F4 mixed signals
-  SC --[#7F8C8D]> Engine: **None (NO ACTION)**
+alt #D5F5E3 LONG + sentiment > 0.75
+  MA --[#27AE60]> Engine: **margin x 1.5 (boost)**
+else #FADBD8 SHORT + sentiment < 0.25
+  MA --[#C0392B]> Engine: **margin x 1.5 (boost)**
+else #F2F3F4 direction disagrees
+  MA --[#7F8C8D]> Engine: **margin x 1.0 (unchanged)**
 end
 
-deactivate SC
+deactivate MA
 
 @enduml
 
 ' ============================================================
 @startuml Activity_SignalFlow
 !theme cerulean-outline
-title <size:18>**Activity Diagram - Signal Processing Flow**</size>
+title <size:18>**Activity Diagram - Live Signal & Margin Flow**</size>
 
 skinparam {
   shadowing true
@@ -1861,13 +2379,11 @@ skinparam {
   ArrowColor #2C3E50
   ArrowThickness 2
 }
-
 skinparam activity {
   BackgroundColor #D6EAF8
   BorderColor #2980B9
   FontStyle bold
 }
-
 skinparam diamond {
   BackgroundColor #FEF9E7
   BorderColor #F39C12
@@ -1875,46 +2391,40 @@ skinparam diamond {
 
 |#EBF5FB| Data Layer
 start
-:Bar Completed;
+:Bar Completed (via Streamer);
 
 |#E8DAEF| Intelligence Layer
 :Strategy.on_bar(bar, ctx);
 
 if (Signal generated?) then (<color:#27AE60>yes</color>)
-  :strategy_signal = BUY/SELL;
+  :direction = LONG / SHORT;
 
   if (News enabled?) then (<color:#27AE60>yes</color>)
     |#FDEBD0| News Layer
-    :Fetch news articles;
-    :Analyze sentiment\n(OpenAI / Gemini);
+    :NewsEngine.get_sentiment(symbol);
     :sentiment_score = [0.0 - 1.0];
+    :MarginAdjuster.compute_margin_multiplier();
 
-    |#E8DAEF| Intelligence Layer
-    :SignalCombiner.combine();
-
-    if (BUY + sentiment > 0.6?) then (<color:#27AE60>yes</color>)
-      #ABEBC6:final_signal = **LONG (+1)**;
-    elseif (SELL + sentiment < 0.4?) then (<color:#27AE60>yes</color>)
-      #F1948A:final_signal = **SHORT (-1)**;
-    else (<color:#C0392B>mixed</color>)
-      #D5D8DC:final_signal = None;
-      stop
+    if (direction agrees w/ sentiment?) then (<color:#27AE60>yes</color>)
+      #ABEBC6:margin x= (1 + boost)  up to +50%;
+    else (<color:#7F8C8D>no</color>)
+      #D5D8DC:margin x= 1.0  (unchanged);
     endif
   else (<color:#7F8C8D>no</color>)
-    :final_signal = strategy_signal;
+    :margin = base sizing;
   endif
 
   |#FADBD8| Risk Layer
-  :RiskManager.pre_trade_check();
+  :GlobalRisk.check_account_risk();
 
-  if (Approved?) then (<color:#27AE60>yes</color>)
+  if (Allowed?) then (<color:#27AE60>yes</color>)
     |#D1F2EB| Execution Layer
-    :Calculate position size;
-    :Execute market order;
-    :Place TP/SL orders;
-    :Update position tracking;
+    :Compute qty from margin x leverage;
+    :Broker.market_order();
+    :place_stop_market / take_profit;
+    :LiveSupervisor tracks position;
   else (<color:#C0392B>no</color>)
-    #F1948A:Log rejection reason;
+    #F1948A:Log rejection / maybe kill-switch;
   endif
 
 else (<color:#7F8C8D>no</color>)
@@ -1937,21 +2447,26 @@ skinparam {
   ArrowColor #34495E
   ArrowThickness 2
 }
-
 skinparam node {
   FontSize 14
   FontStyle bold
 }
-
 skinparam component {
   FontSize 11
 }
 
-node "Data Sources" <<external>> #EBF5FB {
+node "External Sources" <<external>> #EBF5FB {
   [Binance WebSocket] as WS #AED6F1
   [Binance REST API] as REST #AED6F1
-  [CryptoCompare API] as CC #F5CBA7
+  [CryptoCompare / DuckDuckGo] as CC #F5CBA7
+  [OpenAI / Gemini LLM] as LLM #F5CBA7
   [Disk Tick Data] as DISK #D5D8DC
+}
+
+node "CLI + Orchestration" #FCF3CF {
+  [app.py] as APP #FAD7A0
+  [Services] as SVC #F7DC6F
+  [Factories] as FAC #FCF3CF
 }
 
 node "Data Layer" #D6EAF8 {
@@ -1963,53 +2478,57 @@ node "Data Layer" #D6EAF8 {
 }
 
 node "Intelligence Layer" #E8DAEF {
-  [IStrategy] as STRAT #D2B4DE
+  [IStrategy / Composite] as STRAT #D2B4DE
+  [RegimeDetector] as REG #D7BDE2
   [NewsEngine] as NE #F5CBA7
-  [SignalCombiner] as SC #F5CBA7
+  [MarginAdjuster] as MA #F5CBA7
 }
 
 node "Execution Layer" #D1F2EB {
   [ExecutionModel (BT)] as EM #ABEBC6
-  [BinanceBroker (Live)] as BB #AED6F1
-  [PositionManager] as PM #A3E4D7
+  [Broker (Live/Dry)] as BRK #AED6F1
+  [LiveSupervisor / PositionManager] as PM #A3E4D7
 }
 
 node "Risk Layer" #FADBD8 {
-  [RiskManager (BT)] as RM #F1948A
-  [GlobalRisk (Live)] as GR #F1948A
+  [BasicRiskManager (BT)] as RM #F1948A
+  [LiveGlobalRisk] as GR #F1948A
   [ExitManager] as EXM #F1948A
+  [RejectionCounter] as RC #F1948A
 }
 
 node "Reporting" #FEF9E7 {
-  [MetricsSink] as MS #ABEBC6
-  [Scorer] as SCR #ABEBC6
+  [MetricsSink / Scorer] as MS #ABEBC6
   [Portfolio] as PF #F9E79F
+  [LiveMetrics / Notifier] as LM #A3E4D7
 }
 
+APP -[#D4AC0D]-> SVC
+SVC -[#D4AC0D]-> FAC
 DISK -[#7F8C8D]-> TS
 TS -[#2980B9]-> DS
 WS -[#1ABC9C]-> LS
 REST -[#1ABC9C]-> LS
 CC -[#E67E22]-> NE
+LLM -[#E67E22]-> NE
 
 DS -[#2980B9]-> BBL
 LS -[#1ABC9C]-> BBL
 BBL -[#2980B9]-> BST
-
 BST -[#8E44AD]-> STRAT
-NE -[#E67E22]-> SC
-STRAT -[#8E44AD]-> SC
+REG -[#8E44AD]-> STRAT
+NE -[#E67E22]-> MA
 
-SC -[#C0392B]-> RM
-SC -[#C0392B]-> GR
+STRAT -[#C0392B]-> RM
+STRAT -[#C0392B]-> GR
+MA -[#E67E22]-> PM
 RM -[#27AE60]-> EM
-GR -[#1ABC9C]-> BB
-
+GR -[#1ABC9C]-> BRK
 EM -[#F39C12]-> PF
-BB -[#1ABC9C]-> PM
-
+BRK -[#1ABC9C]-> PM
+RC -[#C0392B]-> GR
 PF -[#27AE60]-> MS
-MS -[#27AE60]-> SCR
+PM -[#1ABC9C]-> LM
 
 @enduml
 
@@ -2024,24 +2543,20 @@ skinparam {
   ArrowColor #2C3E50
   ArrowThickness 2
 }
-
 skinparam state {
   FontSize 13
   FontStyle bold
   BackgroundColor #D6EAF8
   BorderColor #2980B9
 }
-
 skinparam state<<danger>> {
   BackgroundColor #FADBD8
   BorderColor #E74C3C
 }
-
 skinparam state<<success>> {
   BackgroundColor #D5F5E3
   BorderColor #27AE60
 }
-
 skinparam state<<active>> {
   BackgroundColor #FDEBD0
   BorderColor #E67E22
@@ -2049,39 +2564,24 @@ skinparam state<<active>> {
 
 [*] --> NoPosition
 
-state NoPosition <<success>> {
-}
-
-state PendingOpen <<active>> {
-}
-
-state Open <<active>> {
-}
-
-state TrailingStop <<active>> {
-}
-
-state PendingClose <<active>> {
-}
-
-state Closed <<success>> {
-}
-
-state Liquidated <<danger>> {
-}
+state NoPosition <<success>>
+state PendingOpen <<active>>
+state Open <<active>>
+state TrailingStop <<active>>
+state PendingClose <<active>>
+state Closed <<success>>
+state Liquidated <<danger>>
 
 NoPosition -[#2980B9,bold]-> PendingOpen : Signal received
 PendingOpen -[#27AE60,bold]-> Open : Order filled
-PendingOpen -[#C0392B]-> NoPosition : Order rejected
+PendingOpen -[#C0392B]-> NoPosition : Order rejected / slippage abort
 
 Open -[#E67E22]-> TrailingStop : Trailing stop active
 Open -[#C0392B]-> PendingClose : TP/SL triggered
 Open -[#C0392B]-> PendingClose : Max bars reached
-Open -[#7F8C8D]-> PendingClose : Manual close
-Open -[#E74C3C,bold]-> Liquidated : Margin call
+Open -[#E74C3C,bold]-> Liquidated : Liquidation guard
 
-TrailingStop -[#C0392B]-> PendingClose : Trail triggered
-TrailingStop -[#C0392B]-> PendingClose : TP triggered
+TrailingStop -[#C0392B]-> PendingClose : Trail / TP triggered
 
 PendingClose -[#27AE60,bold]-> Closed : Close order filled
 Closed -[#2980B9]-> NoPosition : Reset
@@ -2101,24 +2601,20 @@ skinparam {
   ArrowColor #2C3E50
   ArrowThickness 2
 }
-
 skinparam state {
   FontSize 13
   FontStyle bold
   BackgroundColor #D6EAF8
   BorderColor #2980B9
 }
-
 skinparam state<<warning>> {
   BackgroundColor #FDEBD0
   BorderColor #E67E22
 }
-
 skinparam state<<success>> {
   BackgroundColor #D5F5E3
   BorderColor #27AE60
 }
-
 skinparam state<<danger>> {
   BackgroundColor #FADBD8
   BorderColor #E74C3C
@@ -2126,20 +2622,11 @@ skinparam state<<danger>> {
 
 [*] -[#2980B9,bold]-> PENDING : Order created
 
-state PENDING {
-}
-
-state FILLED <<success>> {
-}
-
-state PARTIALLY_FILLED <<warning>> {
-}
-
-state CANCELLED <<danger>> {
-}
-
-state REJECTED <<danger>> {
-}
+state PENDING
+state FILLED <<success>>
+state PARTIALLY_FILLED <<warning>>
+state CANCELLED <<danger>>
+state REJECTED <<danger>>
 
 PENDING -[#27AE60,bold]-> FILLED : Fully executed
 PENDING -[#E67E22]-> PARTIALLY_FILLED : Partial execution
@@ -2166,19 +2653,16 @@ skinparam {
   ArrowColor #34495E
   ArrowThickness 1.5
 }
-
 skinparam usecase {
   BackgroundColor #D6EAF8
   BorderColor #2980B9
   FontSize 11
   FontStyle bold
 }
-
 skinparam actor {
   FontSize 13
   FontStyle bold
 }
-
 skinparam rectangle {
   BorderColor #2C3E50
   BackgroundColor #FDFEFE
@@ -2190,35 +2674,35 @@ left to right direction
 
 actor "Trader" as trader #F9E79F
 actor "Binance API" as binance #AED6F1
-actor "News API" as newsapi #F5CBA7
+actor "News / LLM API" as newsapi #F5CBA7
 
 rectangle "AI-Adaptive Trading Bot" {
   usecase "Run Backtest" as UC1 #FADBD8
-  usecase "Configure Strategy" as UC2 #E8DAEF
-  usecase "Start Live Trading" as UC3 #D1F2EB
-  usecase "Monitor Positions" as UC4 #D1F2EB
-  usecase "Analyze Sentiment" as UC5 #FDEBD0
-  usecase "Manage Risk" as UC6 #FADBD8
-  usecase "Fetch Tick Data" as UC7 #D6EAF8
-  usecase "Score Strategy" as UC8 #D5F5E3
-  usecase "View Metrics" as UC9 #D5F5E3
+  usecase "Sweep / Cross-Validate" as UC2 #FADBD8
+  usecase "Configure / Compose Strategy" as UC3 #E8DAEF
+  usecase "Validate Config\n(real-money gate)" as UC4 #FCF3CF
+  usecase "Promote to Live" as UC5 #FCF3CF
+  usecase "Start Live / Dry-Run" as UC6 #D1F2EB
+  usecase "Adjust Margin\nby Sentiment" as UC7 #FDEBD0
+  usecase "Manage Risk\n(kill-switch)" as UC8 #FADBD8
+  usecase "Monitor Positions" as UC9 #D1F2EB
 
-  UC1 .[#7F8C8D].> UC2 : <<include>>
-  UC1 .[#7F8C8D].> UC9 : <<include>>
-  UC3 .[#7F8C8D].> UC2 : <<include>>
-  UC3 .[#E67E22,dashed].> UC5 : <<extend>>
-  UC3 .[#7F8C8D].> UC6 : <<include>>
-  UC3 .[#7F8C8D].> UC4 : <<include>>
-  UC1 .[#27AE60,dashed].> UC8 : <<extend>>
+  UC1 .[#7F8C8D].> UC3 : <<include>>
+  UC2 .[#7F8C8D].> UC1 : <<include>>
+  UC6 .[#7F8C8D].> UC4 : <<include>>
+  UC6 .[#7F8C8D].> UC5 : <<include>>
+  UC6 .[#7F8C8D].> UC8 : <<include>>
+  UC6 .[#7F8C8D].> UC9 : <<include>>
+  UC6 .[#E67E22,dashed].> UC7 : <<extend>>
 }
 
 trader -[#E74C3C]-> UC1
-trader -[#1ABC9C]-> UC3
-trader -[#2980B9]-> UC7
-trader -[#8E44AD]-> UC2
-
-binance -[#2980B9]-> UC3
-binance -[#2980B9]-> UC7
-newsapi -[#E67E22]-> UC5
+trader -[#C0392B]-> UC2
+trader -[#8E44AD]-> UC3
+trader -[#D4AC0D]-> UC4
+trader -[#1ABC9C]-> UC6
+binance -[#2980B9]-> UC6
+binance -[#2980B9]-> UC9
+newsapi -[#E67E22]-> UC7
 
 @enduml

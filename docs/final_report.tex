@@ -132,7 +132,7 @@
                FACULTY OF COMPUTER AND INFORMATICS} } \\
         \vspace{5.5cm}
         \LARGE{\thetitle}  \\
-        \vspace{4.5cm}
+        \vspace{4cm}
         \Large{Graduation Project Final Report} \\
         \vspace{0.5cm}
         \Large{Mehmet Onur Şahin} \\
@@ -140,10 +140,9 @@
         \vspace{0.3cm}
         \Large{Mehmetcan Kul} \\
         \Large{150210076} \\
-        \vspace{3cm}
+        \vspace{2.5cm}
         \large{Department: Computer Engineering} \\
-        \large{Division: Computer Engineering} \\
-        \vspace{1.5cm}
+        \vspace{1.2cm}
         \large{Advisor: Assoc.\ Prof.\ Dr.\ Feza Buzluca} \\
         \vspace{\fill}
         \large{\normalfont \sffamily \thedate}
@@ -208,26 +207,41 @@ promotion gate that mechanically refuses to flip a configuration to
 real money unless every safety and quality threshold is independently
 verified.
 
-The implementation comprises a Python codebase with \fixme{N} unit
-and integration tests, three production strategies, a Docker image
-suitable for single-instance deployment, and a unified \texttt{app.py}
-CLI exposing the \texttt{backtest}, \texttt{dry-run}, \texttt{live},
-\texttt{sweep} and \texttt{validate} subcommands. Evaluation is
-performed through two controlled experiments: a sentiment-on / sentiment-off
-A/B dry-run on identical live tape, and a backtest-vs-dry-run
-divergence harness on the same UTC window. \fixme{Add the final
-results sentence once the experiments are re-run on the defense
-window: best strategy Sharpe / Deflated Sharpe, backtest--live
-divergence percentage, sentiment delta in trade count and PnL.}
+The implementation comprises a Python codebase with 654 unit and
+integration test functions across 78 test modules, four production
+strategies (EMA-Cross+MACD trend, Donchian breakout, RSI threshold,
+ICT liquidity-sweep / FVG), a Docker image suitable for single-instance
+deployment, and a unified \texttt{app.py} CLI exposing the
+\texttt{backtest}, \texttt{dry-run}, \texttt{live}, \texttt{sweep} and
+\texttt{validate} subcommands. Backtest evaluation is performed on up
+to 17 months of Binance USDT-M Futures tick data covering AVAXUSDT,
+BTCUSDT, ETHUSDT and SOLUSDT --- a combined corpus exceeding 1.25
+billion ticks --- under a realistic-cost layer
+(\texttt{config/realism\_live.yaml}) at 10$\times$ leverage in margin
+mode. The Hyperband-accelerated Purged-CV sweeps across all four
+symbols on the EMA-Cross strategy returned best in-sample Sharpe
+ratios of $-0.049$ (BTC), $0.249$ (AVAX), $0.307$ (ETH) and an
+analogous picture on ICT (best $0.194$) and Donchian (best $-0.951$);
+in every case the corresponding Deflated Sharpe Ratio was strongly
+negative ($-2.43$ to $-3.85$), triggering the system's HIGH-severity
+\texttt{SELECTION BIAS WARNING}. The honest empirical finding is
+therefore that none of the candidate strategies demonstrates a
+statistically defensible edge on the available data window. This is
+the intended behaviour of the AFML-aware scoring pipeline: it prevents
+the deployment of a configuration whose apparent in-sample Sharpe is
+within the range explainable by selection over the trial count.
 
 The project intentionally restricts itself to free, openly-available
-data sources (DuckDuckGo news, Binance public market data, open-source
-LLM providers within free tier limits). The pipeline is designed so
-that swapping in commercial-grade data feeds (Bloomberg, Refinitiv) or
-a self-hosted financial LLM such as FinGPT would be a configuration
-change, not a re-architecture. The contribution is therefore not the
-absolute performance number that any one configuration achieves, but
-the engineering substrate that makes those numbers honest.
+data sources (DuckDuckGo news, Binance public market data, free-tier
+LLM providers). The pipeline is designed so that swapping in
+commercial-grade data feeds (Bloomberg, Refinitiv) or a self-hosted
+financial LLM such as FinGPT would be a configuration change, not a
+re-architecture. The contribution is therefore not the absolute
+performance number that any one configuration achieves, but the
+engineering substrate that makes those numbers honest. Live
+deployment will follow this report: a one-month real-tape monitoring
+run is planned, after which the live results will be presented
+alongside this thesis at the defense.
 
 \newpage
 \section*{\centering\theturkishtitle}
@@ -271,7 +285,22 @@ yapılandırma değişikliği olacağı biçimde tasarlanmıştır. Dolayısıyl
 katkı; herhangi bir yapılandırmanın elde ettiği mutlak performans
 sayısı değil, bu sayıları dürüst kılan mühendislik altyapısıdır.
 
-\fixme{Deney sonuçları kesinleştiğinde 1--2 sayısal sonuç cümlesi eklenecek.}
+Deneyler; AVAXUSDT, BTCUSDT, ETHUSDT ve SOLUSDT semboller üzerinde,
+Binance USDT-M Futures tarihsel tik verisinden oluşan toplam 1.25
+milyarı aşkın tikten oluşan bir derlem üzerinde, gerçekçi-maliyet
+katmanı etkin halde, 10$\times$ kaldıraç ile yürütülmüştür.
+Hyperband ile hızlandırılmış Purged-CV taramaları, en iyi numune-içi
+Sharpe oranlarını sembol bazında $-0.049$ ile $0.307$ arasında
+üretmiş; ancak deneme sayısı ve numune uzunluğu için düzeltilmiş
+Deflated Sharpe Oranı bütün taramalarda kuvvetle negatif ($-2.43$
+ile $-3.85$ arası) çıkmış ve sistemin YÜKSEK seviyeli
+\texttt{SELECTION BIAS WARNING} uyarısını tetiklemiştir. Bu, mevcut
+veri penceresinde adayların hiçbirinin istatistiksel olarak
+savunulabilir bir avantaj göstermediği bulgusudur ve aslında AFML
+tabanlı skorlama hattının çalıştığının kanıtıdır: hat, üst-uyum
+(overfitting) potansiyeli yüksek bir yapılandırmanın canlıya
+geçmesini reddeder. Gerçek-tik canlı sonuçlar bu raporun ardından
+planlanan bir aylık takip dönemi sonunda sunulacaktır.
 
 \newpage
 \tableofcontents
@@ -445,11 +474,12 @@ conditions. Concretely:
     explicitly out of scope --- they require GPU resources we did
     not have. The sentiment interface admits a self-hosted analyser
     as a drop-in replacement; the implementation is future work.
-    \item Real-money mainnet deployment was prepared but not
-    executed: the canary promotion gate passes \fixme{or fails ---
-    fill in after the final run}, but the financial decision to
-    deploy with real capital is outside the academic scope of this
-    thesis.
+    \item Real-money mainnet deployment is the next phase after this
+    report: a one-month dry-run / testnet monitoring period is
+    scheduled to follow submission of this thesis, after which the
+    live results will be presented at the project defense. No live
+    or mainnet PnL is reported in this report by design --- the
+    backtest substrate is what this report evaluates.
     \item Commercial market-data feeds (Bloomberg, Refinitiv) and
     paid news APIs are out of scope; the system is built around
     free APIs only and the path to swap in commercial feeds is
@@ -646,47 +676,29 @@ live engine.
 \section{Theoretical Background}
 % ===================================================================
 
-This section summarises the formal definitions of the metrics, the
-cross-validation scheme, and the cost-model formulas that the rest of
-the report depends on.
+This section summarises the metrics, the cross-validation scheme,
+the cost model, the indicators and the sentiment combiner that the
+rest of the report depends on. Formal derivations are deferred to
+the cited references.
 
 \subsection{Sharpe Ratio and Deflated Sharpe Ratio}
 
-Given a sequence of period returns $r_1,\dots,r_T$, the annualised
-Sharpe ratio is
-\[
-\widehat{S} = \sqrt{f}\;\frac{\mu}{\sigma},
-\quad \mu = \frac{1}{T}\sum_t r_t,
-\quad \sigma = \sqrt{\frac{1}{T-1}\sum_t (r_t - \mu)^2},
-\]
-where $f$ is the number of periods per year (e.g.\ $f = 365 \times
-24 \times 4$ for 15-minute bars on a 24/7 market).
-
-Following Bailey and López de Prado \cite{bailey2014deflated}, when
-$N$ candidate strategies are evaluated and the \emph{maximum}
-observed Sharpe $\widehat{S}_{\max}$ is selected, the Deflated
-Sharpe Ratio adjusts for selection bias:
-\[
-\mathrm{DSR}(\widehat{S}_{\max}) =
-\Phi\!\left(
-\frac{(\widehat{S}_{\max} - \widehat{S}_0)\sqrt{T-1}}
-{\sqrt{1 - \widehat{\gamma}_3\widehat{S}_{\max}
-+ \dfrac{\widehat{\gamma}_4 - 1}{4}\widehat{S}_{\max}^2}}
-\right),
-\]
-where $\Phi$ is the standard-normal CDF, $\widehat{\gamma}_3,
-\widehat{\gamma}_4$ are the sample skew and excess kurtosis of the
-winner's returns, and $\widehat{S}_0$ is the expected best Sharpe of
-$N$ random strategies under the null hypothesis. A common
-operational rule is to treat $\mathrm{DSR} < 1$ as a strong indicator
-of selection bias.
+The annualised Sharpe ratio of a returns series is the mean return
+divided by its standard deviation, scaled by the square root of the
+number of periods per year. When $N$ candidate strategies are
+evaluated and the maximum observed Sharpe is selected, that
+observed maximum is upward-biased; Bailey and López de Prado's
+Deflated Sharpe Ratio (DSR) \cite{bailey2014deflated} corrects it
+given $N$, the sample length, and the skew and kurtosis of the
+winner's returns. Operationally we treat $\mathrm{DSR}<1$ as a
+strong indicator of selection bias.
 
 \subsection{Purged $K$-fold Cross-Validation with Embargo}
 
-Standard $K$-fold cross-validation leaks information when bars in a
-training fold carry labels whose realisation horizon overlaps the
-test fold. AFML's purged $K$-fold scheme drops training observations
-whose label-realisation interval intersects the test-fold interval,
+Standard $K$-fold CV leaks information when bars in a training
+fold carry labels whose realisation horizon overlaps the test
+fold. AFML's purged $K$-fold scheme drops training observations
+whose label-realisation interval intersects the test-fold interval
 and adds an embargo --- a short ``no-train'' window after the test
 fold --- to prevent the reverse leak. We follow the same scheme in
 \texttt{Backtest/scoring/splits.py}; per-fold realism configuration
@@ -694,76 +706,43 @@ is propagated by \texttt{batch.run\_cv\_from\_config}.
 
 \subsection{Cost-model formulas}
 
-Let $p$ be the order-bar reference price, $q$ the order quantity, $V$
-the bar's traded volume and $\mathrm{ATR}$ the average true range at
-that bar. Then the executed price $p_{\text{fill}}$ is decomposed as
-$p_{\text{fill}} = p + c_{\text{spread}} + c_{\text{slip}} +
-c_{\text{lat}}$ where:
-
-\begin{itemize}[noitemsep]
-    \item \textbf{Spread cost.} $c_{\text{spread}} = \text{sgn}(q)
-    \cdot \tfrac{1}{2} \cdot \mathrm{spread\_bps} \cdot p$.
-    \item \textbf{Slippage --- volume sqrt model.}
-    $c_{\text{slip}} = \text{sgn}(q) \cdot k \cdot p \cdot
-    \sqrt{|q|/V}$ where $k$ is the impact factor.
-    \item \textbf{Slippage --- ATR-volatility model.}
-    $c_{\text{slip}} = \text{sgn}(q) \cdot k_\sigma \cdot
-    \mathrm{ATR}$.
-    \item \textbf{Latency.} $c_{\text{lat}}$ is the difference
-    between the order-bar reference price and the bar closest to the
-    fill-time when \texttt{price\_latency\_mode = price\_aware}; zero
-    in the legacy \texttt{none} mode.
-\end{itemize}
-
-Funding cost over an interval of $h$ hours is $\Delta_{\text{fund}} =
-|q \cdot p| \cdot r_{\text{fund}}$ where $r_{\text{fund}}$ is the
-per-interval funding rate; borrow cost is $\Delta_{\text{borr}} = |q
-\cdot p| \cdot r_{\text{borr,year}} \cdot h/8760$. Both are deducted
-from portfolio cash and recorded per-component in
-\texttt{MetricsSink}.
+The realism layer decomposes the executed price into a reference
+price plus a spread component (half of the configured spread in
+bps), a slippage component (either the volume-sqrt model, with
+impact proportional to the square root of order size over bar
+volume, or the ATR-volatility model, with impact proportional to
+the bar ATR), and a latency component (the price difference
+between the order bar and the bar closest to the fill-time when
+\texttt{price\_latency\_mode = price\_aware}; zero otherwise).
+Funding cost over a perpetual-futures interval is the position
+notional times the per-interval funding rate; borrow cost is the
+notional times an annual borrow rate prorated to the elapsed
+interval. Both are deducted from portfolio cash and recorded
+per-component in \texttt{MetricsSink}.
 
 \subsection{Indicators}
 
 The strategies depend on standard technical indicators implemented
-via TA-Lib or pure NumPy:
-
-\begin{itemize}[noitemsep]
-    \item \textbf{EMA} --- exponential moving average $\mathrm{EMA}_t
-    = \alpha p_t + (1-\alpha)\mathrm{EMA}_{t-1}$ with $\alpha =
-    2/(n+1)$.
-    \item \textbf{MACD} --- $\mathrm{MACD}_t =
-    \mathrm{EMA}_t^{(\text{fast})} - \mathrm{EMA}_t^{(\text{slow})}$;
-    signal line is an EMA of MACD; histogram is the difference.
-    \item \textbf{ADX} --- Wilder's directional movement index;
-    values above $\sim 20$ indicate trending behaviour.
-    \item \textbf{ATR} --- Wilder's average true range; the volatility
-    estimate driving the trailing stop and the volatility-target sizing.
-    \item \textbf{Donchian channel} --- highest high / lowest low
-    over $n$ bars; breakout entry signal.
-    \item \textbf{RSI} --- Wilder's relative strength index, used in
-    the mean-reversion strategy.
-\end{itemize}
+via TA-Lib or pure NumPy: \textbf{EMA} (exponential moving
+average); \textbf{MACD} (fast-EMA minus slow-EMA, with an EMA
+signal line and a histogram); \textbf{ADX} (Wilder's directional
+movement index; $>\!20$ indicates trending); \textbf{ATR}
+(Wilder's average true range; drives trailing stop and
+volatility-target sizing); \textbf{Donchian channel} (highest
+high / lowest low over $n$ bars; breakout entry); and \textbf{RSI}
+(Wilder's relative strength index, used in mean-reversion).
 
 \subsection{LLM-mediated sentiment scoring}
 
-The sentiment analyser is treated as a black-box function
-$\sigma: \text{texts} \rightarrow [0,1]$, with $0$ strongly bearish,
-$1$ strongly bullish, $0.5$ neutral. The
-\texttt{BinarySignalCombiner} resolves a strategy signal $s \in
-\{\text{BUY},\text{SELL},\text{NONE}\}$ with sentiment $\sigma$ as
-
-\[
-\mathrm{combine}(s, \sigma) =
-\begin{cases}
-+1 & \text{if } s=\text{BUY}\;\wedge\;\sigma > \tau_{\text{buy}} \\
--1 & \text{if } s=\text{SELL}\;\wedge\;\sigma < \tau_{\text{sell}} \\
-\bot & \text{otherwise (veto)}
-\end{cases}
-\]
-
-with default thresholds $\tau_{\text{buy}} = 0.6$ and
-$\tau_{\text{sell}} = 0.4$. The design property the combiner enforces
-is that sentiment can only suppress entries, never create them.
+The sentiment analyser is treated as a black-box function mapping
+news texts to a score in $[0,1]$ (0 strongly bearish, 1 strongly
+bullish, 0.5 neutral). The \texttt{BinarySignalCombiner} resolves
+a strategy signal against the score using two thresholds (defaults
+$\tau_{\text{buy}}=0.6$, $\tau_{\text{sell}}=0.4$): a BUY is
+confirmed when sentiment exceeds $\tau_{\text{buy}}$, a SELL when
+it falls below $\tau_{\text{sell}}$; otherwise the entry is
+vetoed. The design property is that sentiment can only suppress
+entries, never create them.
 
 \newpage
 % ===================================================================
@@ -828,8 +807,8 @@ default).
 
 \begin{figure}[H]
     \centering
-    \fixme{Export the \texttt{UseCase} diagram from \texttt{docs/uml\_diagrams.puml} as a PNG and include it here.}
-    \caption{System use-case diagram.}
+    \includegraphics[width=0.85\linewidth]{diagrams/UseCase.png}
+    \caption{System use-case diagram. Three actors interact with the system: the trader, the Binance API (data and execution), and the news API (DuckDuckGo by default). \texttt{Run Backtest} and \texttt{Start Live Trading} share \texttt{Configure Strategy}; live trading optionally extends with sentiment analysis.}
     \label{fig:usecase}
 \end{figure}
 
@@ -849,8 +828,8 @@ entry point. Figure~\ref{fig:package} shows the package-level view.
 
 \begin{figure}[H]
     \centering
-    \fixme{Export the \texttt{Package\_Overview} diagram from \texttt{docs/uml\_diagrams.puml} as a PNG and include it here.}
-    \caption{Package-level architecture.}
+    \includegraphics[width=\linewidth]{diagrams/Package_Overview.png}
+    \caption{Package-level architecture. \texttt{Interfaces} is the contract layer; \texttt{Backtest} and \texttt{live} are independent engines that share the same \texttt{IStrategy} implementations from \texttt{Strategy}. The unified \texttt{app.py} entry point dispatches to either engine.}
     \label{fig:package}
 \end{figure}
 
@@ -881,6 +860,22 @@ and both depend only on \texttt{Interfaces/}, \texttt{Strategy/},
 \texttt{news/} and \texttt{utils/}. This is what makes the single
 \texttt{IStrategy} contract a structural guarantee rather than a
 convention.
+
+A more granular view that crosses the package boundaries and groups
+the runtime components by layer is shown in
+Figure~\ref{fig:component}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{diagrams/Component_Architecture.png}
+    \caption{Component architecture across the five runtime layers
+    (Data, Intelligence, Execution, Risk, Reporting). External data
+    sources (Binance WebSocket / REST, the news API, disk tick
+    storage) feed the data layer; the intelligence layer's strategy
+    output is gated by the risk layer in both backtest and live
+    paths.}
+    \label{fig:component}
+\end{figure}
 
 \subsubsection{Data Model}
 
@@ -920,7 +915,7 @@ implemented as frozen dataclasses in \texttt{Interfaces/}.
     \end{tabularx}
 \end{table}
 
-\textbf{Persistent storage.} Tick data lives on disk as
+\textbf{Persistent storage.} Tick data lives on disk as 
 \texttt{data/ticks/<symbol>/YYYY-MM-DD.csv}. The \texttt{TickStore}
 deduplicates on \texttt{(timestamp\_ns, trade\_id)} rather than on
 \texttt{(timestamp, price, volume)} because two distinct trades may
@@ -938,47 +933,87 @@ Figure~\ref{fig:class-bt-engine}.
 
 \begin{figure}[H]
     \centering
-    \fixme{Export the \texttt{Class\_Backtest\_Engine} diagram from \texttt{docs/uml\_diagrams.puml}.}
-    \caption{Backtest engine class diagram.}
+    \includegraphics[width=0.95\linewidth]{diagrams/Class_Backtest_Engine.png}
+    \caption{Backtest engine class diagram. \texttt{BacktestEngine} composes a \texttt{Portfolio} (which in turn holds \texttt{Position} instances and a \texttt{MarginConfig}), a strategy, a risk manager, an execution model, an exit manager, a metrics sink, and a tick-data streamer.}
     \label{fig:class-bt-engine}
+\end{figure}
+
+The execution and cost-model side of the backtest engine is split
+into the \\ \texttt{SimpleExecutionModel} (which owns partial-fill and
+latency configuration plus the execution-statistics sampler) and the
+\texttt{CompositeCostModel} (which aggregates fee, slippage, spread
+and latency sub-models). The class layout is shown in
+Figure~\ref{fig:class-bt-exec}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{diagrams/Class_Backtest_Execution.png}
+    \caption{Backtest execution and cost-model classes. The
+    \texttt{CompositeCostModel} aggregates fee, slippage, spread and
+    latency sub-models; swapping a sub-model (e.g.\ replacing
+    \texttt{FixedSlippageModel} with \texttt{VolumeSqrtSlippageModel})
+    is a constructor-time configuration change.}
+    \label{fig:class-bt-exec}
+\end{figure}
+
+On the live side, \texttt{LiveEngine} composes a broker, a streamer,
+a bar store, a strategy, a position manager, a global risk monitor
+and (optionally) a news engine plus signal combiner.
+\texttt{BinanceBroker} and \texttt{BinanceClient} are the concrete
+implementations of \texttt{IBroker} and \texttt{IClient}
+(Figure~\ref{fig:class-live}).
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{diagrams/Class_Live.png}
+    \caption{Live trading classes. The composition root injects the
+    concrete \texttt{BinanceBroker} and \texttt{Streamer} into
+    \texttt{LiveEngine}; substituting a different exchange means
+    providing a new \texttt{IBroker} implementation only, with no
+    change to \texttt{LiveEngine} or the strategy.}
+    \label{fig:class-live}
+\end{figure}
+
+The news subsystem is structured around three interfaces
+(\texttt{INewsSource}, \texttt{ISentimentAnalyzer},
+\texttt{ISignalCombiner}) with a remote-LLM and a mock
+implementation of each (Figure~\ref{fig:class-news}). The
+\texttt{NewsEngine} caches per-symbol sentiment scores between
+strategy calls.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{diagrams/Class_News.png}
+    \caption{ \scriptsize News and sentiment classes. Both OpenAI and Gemini
+    backends implement \texttt{ISentimentAnalyzer}; a self-hosted
+    FinGPT or FinBERT model would slot in behind the same interface.
+    \texttt{BinarySignalCombiner} consumes the cached sentiment score
+    and the strategy signal to produce a final action (or a veto).}
+    \label{fig:class-news}
 \end{figure}
 
 \subsubsection{Execution Pipeline (Structural Model)}
 
-The backtest engine's main loop is a single-threaded event loop
-(Algorithm~\ref{alg:bt-loop}). The same algorithm structure governs
-the live engine, with the differences that (i) ticks come from a
-WebSocket rather than disk, (ii) execution goes through
-\texttt{BinanceBroker} rather than \texttt{SimpleExecutionModel}, and
-(iii) the risk check is replaced by the global risk monitor.
+The backtest engine's main loop is a single-threaded event loop;
+the same structure governs the live engine, with three differences:
+ticks come from a WebSocket rather than disk, execution goes
+through \texttt{BinanceBroker} rather than
+\texttt{SimpleExecutionModel}, and the risk check is replaced by
+the global risk monitor.
 
-\begin{algorithm}[H]
-\caption{Backtest event loop.}\label{alg:bt-loop}
-\begin{algorithmic}[1]
-\State Initialise \texttt{TickStore}, \texttt{DiskTickStreamer},
-\texttt{BarBuilder}, \texttt{BarStore}, \texttt{Strategy},
-\texttt{RiskManager}, \texttt{Portfolio}, \texttt{ExecutionModel},
-\texttt{ExitManager}, \texttt{MetricsSink}
-\For{each tick $t$ from \texttt{DiskTickStreamer}}
-    \State $b \gets \texttt{BarBuilder.process\_tick}(t)$
-    \State \texttt{ExitManager.on\_tick}($t$) \Comment{intrabar TP/SL on raw ticks}
-    \If{$b$ is a completed bar}
-        \State \texttt{BarStore.add\_bar}($b$)
-        \State \texttt{chargeFundingAndBorrow}($b$)
-        \State $d \gets \texttt{Strategy.on\_bar}(b, \textit{ctx})$
-        \For{each $\textit{order}$ in $d$}
-            \If{\texttt{RiskManager.pre\_trade\_check}(\textit{order})}
-                \State $f \gets \texttt{ExecutionModel.fill\_order}(\textit{order}, b)$
-                \State \texttt{Portfolio.apply\_fill}($f$)
-                \State \texttt{MetricsSink.on\_fill}($f$)
-            \EndIf
-        \EndFor
-        \State \texttt{MetricsSink.on\_bar}($b$, equity, position)
-    \EndIf
-\EndFor
-\State \Return \texttt{MetricsSink.finalize()}
-\end{algorithmic}
-\end{algorithm}
+After initialising the data, strategy, risk, execution, exit and
+metrics components, the engine iterates over every tick from
+\texttt{DiskTickStreamer}: each tick is fed to the active
+\texttt{BarBuilder} and to \texttt{ExitManager.on\_tick} (which
+checks already-placed TP/SL levels on raw ticks); on bar
+completion the bar is added to \texttt{BarStore}, funding and
+borrow are charged, and the strategy's \texttt{on\_bar} produces
+zero or more orders, each of which is filtered through
+\texttt{RiskManager.pre\_trade\_check} before being filled by the
+execution model, applied to the portfolio, and recorded.
+\texttt{MetricsSink.finalize()} returns the \texttt{BacktestResult}
+at the end. The same sequence is depicted in
+Figure~\ref{fig:seq-bt}.
 
 The strategy sees only bars; ticks are reserved for the
 \texttt{ExitManager} which checks already-placed take-profit and
@@ -990,108 +1025,66 @@ exist at the decision point).
 
 \subsubsection{AFML-aware Parameter Selection}
 
-The selection step is the place where naïve grid-search overfits.
-Algorithm~\ref{alg:dsr} describes the trial-aware selector used by
-\texttt{BatchBacktest.run\_cv\_from\_config}.
-
-\begin{algorithm}[H]
-\caption{Deflated-Sharpe parameter selection.}\label{alg:dsr}
-\begin{algorithmic}[1]
-\State Sweep $N$ candidates; each scored on $K$ CV folds, producing
-fold Sharpes $\{s_{i,1},\dots,s_{i,K}\}$
-\For{each candidate $i$}
-    \State $\mu_i \gets \mathrm{mean}(s_{i,\cdot})$,
-    $\sigma_i \gets \mathrm{stdev}(s_{i,\cdot})$
-\EndFor
-\State $\widehat{S}_{\max} \gets \max_i \mu_i$
-\State Compute $\mathrm{DSR}(\widehat{S}_{\max})$ per the formula in
-\S 3.1
-\State Filter: discard candidates with $\sigma_i > \texttt{max\_cv\_std}$
-\State Penalise: $e_i \gets \mu_i - w \cdot \sigma_i$ where $w =
-\texttt{cv\_stability\_weight}$
-\State Pick $i^\ast \gets \arg\max_i e_i$
-\If{$\mathrm{DSR} < 1.0$}
-    \State Emit selection-bias warning to the user
-\EndIf
-\State \Return $i^\ast$ with its full per-fold breakdown
-\end{algorithmic}
-\end{algorithm}
+The selection step is where naïve grid-search overfits;
+\texttt{BatchBacktest.run\_cv\_from\_config} therefore uses a
+trial-aware selector.
+The selector first computes the per-candidate mean and standard
+deviation of fold Sharpes, discards any candidate whose fold-std
+exceeds \texttt{max\_cv\_std}, penalises the remaining mean Sharpes
+by $w$\,$\times$\,(fold-std) with $w =
+\texttt{cv\_stability\_weight}$, picks the argmax effective score,
+and emits a HIGH/MODERATE selection-bias warning whenever
+$\mathrm{DSR}<1.0$. The full per-fold breakdown is returned with
+the winner so the operator can inspect fold-by-fold stability.
 
 \subsubsection{Canary-Promotion Gate}
 
 The canary-promotion gate is the most important operational
-construct in the system. Algorithm~\ref{alg:promote} is the
-abbreviated version of
-\texttt{tools/promote\_to\_live.py}. Each numeric threshold is
-configurable; the defaults match the canary YAML profile.
-
-\begin{algorithm}[H]
-\caption{Canary-promotion gate.}\label{alg:promote}
-\begin{algorithmic}[1]
-\State Run \texttt{validate} in real-money strict mode against the
-target YAML config
-\If{validation fails} \State \Return exit code 1 \EndIf
-\State Export a same-window backtest trade list from the strategy +
-realism config
-\If{export fails} \State \Return exit code 2 \EndIf
-\State Run \texttt{compare\_backtest\_live.py} on the dry-run trade CSV
-versus the backtest CSV
-\If{$\texttt{match\_rate} < 0.80$ \textbf{or}
-$\texttt{side\_mismatch} > 0$ \textbf{or}
-$|\overline{\Delta\text{PnL}}_{\text{matched}}| \geq 1.0$}
-    \State \Return exit code 3 \EndIf
-\State Run \texttt{eod\_rollup.py} on the dry-run trade CSV
-\If{$\text{profit\_factor} < 1.1$ \textbf{or}
-$\text{max\_drawdown\_pct} > 3.0$ \textbf{or}
-$\text{avg\_slippage\_bps} > 10$ \textbf{or}
-$\text{fee}/\text{pnl\_gross} > 0.25$}
-    \State \Return exit code 4 \EndIf
-\State \Return exit code 0 \Comment{the operator may now run
-\texttt{app.py live}}
-\end{algorithmic}
-\end{algorithm}
+construct in the system. \texttt{tools/promote\_to\_live.py} runs
+four checks in sequence and exits with a distinct code on the
+first failure: (1) \texttt{validate} in real-money strict mode
+against the target YAML (exit 1); (2) export a same-window
+backtest trade list (exit 2); (3) \texttt{compare\_backtest\_live.py}
+on the dry-run vs.\ backtest trade CSVs, requiring
+$\texttt{match\_rate}\geq 0.80$, $\texttt{side\_mismatch}=0$ and
+$|\overline{\Delta\text{PnL}}_\text{matched}|<\$1$ (exit 3); and
+(4) \texttt{eod\_rollup.py} on the dry-run trade CSV, requiring
+$\text{profit\_factor}\geq 1.1$, $\text{max\_drawdown\_pct}\leq
+3.0$, $\text{avg\_slippage\_bps}\leq 10$ and
+$\text{fee}/\text{pnl\_gross}\leq 0.25$ (exit 4). Exit code 0
+authorises the operator to run \texttt{app.py live}; all
+thresholds are configurable, with defaults matching the canary
+YAML profile.
 
 \subsubsection{Dynamic Models}
 
-The end-to-end dynamic behaviour is documented in three sequence
-diagrams and one activity diagram (all checked in at
-\texttt{docs/uml\_diagrams.puml}):
-
-\begin{itemize}[noitemsep]
-    \item \texttt{Sequence\_Backtest} --- backtest run from
-    \texttt{Runner.run(config)} through the per-tick loop to
-    \texttt{MetricsSink.finalize()}.
-    \item \texttt{Sequence\_LiveTrading} --- live bar event flow:
-    WebSocket $\rightarrow$ \texttt{Streamer} $\rightarrow$
-    \texttt{BarStore} $\rightarrow$ \texttt{Strategy} $\rightarrow$
-    \texttt{NewsEngine}/\texttt{SignalCombiner} $\rightarrow$
-    \texttt{GlobalRisk} $\rightarrow$ \texttt{PositionManager}
-    $\rightarrow$ \texttt{BinanceBroker}.
-    \item \texttt{Sequence\_NewsSentiment} --- sentiment cache lookup,
-    LLM call on miss, combiner resolution.
-    \item \texttt{Activity\_SignalFlow} --- cross-layer decision flow
-    with all veto branches (regime mismatch, sentiment veto, risk
-    rejection).
-\end{itemize}
+The end-to-end dynamic behaviour is documented in two sequence
+diagrams (\texttt{Sequence\_Backtest}, \texttt{Sequence\_LiveTrading})
+and one activity diagram (\texttt{Activity\_SignalFlow}), all
+checked in at \texttt{docs/uml\_diagrams.puml} and rendered as
+Figures~\ref{fig:seq-bt}--\ref{fig:activity} below. The news /
+sentiment flow itself is described by the class diagram in
+Figure~\ref{fig:class-news} and the news branches of the activity
+diagram.
 
 \begin{figure}[H]
     \centering
-    \fixme{Export \texttt{Sequence\_Backtest} from the .puml file.}
-    \caption{Sequence diagram: backtest run.}
+    \includegraphics[width=\linewidth]{diagrams/Sequence_Backtest.png}
+    \caption{Sequence diagram: backtest run. Ticks flow from the \texttt{DiskTickStreamer} through the \texttt{BarBuilder}; only completed bars reach the strategy. Each order produced by the strategy passes through the risk manager before being filled by the execution model and applied to the portfolio.}
     \label{fig:seq-bt}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \fixme{Export \texttt{Sequence\_LiveTrading} from the .puml file.}
-    \caption{Sequence diagram: live trading bar handling.}
+    \includegraphics[width=\linewidth]{diagrams/Sequence_LiveTrading.png}
+    \caption{Sequence diagram: live trading bar handling. The async event loop processes completed bars from the \texttt{Streamer} queue, optionally consults the news engine and signal combiner, and routes approved entries through the global risk monitor to the \texttt{PositionManager}, which places exchange-side stop and take-profit orders alongside the market entry.}
     \label{fig:seq-live}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \fixme{Export \texttt{Activity\_SignalFlow} from the .puml file.}
-    \caption{Activity diagram: signal-processing flow with veto branches.}
+    \includegraphics[width=0.85\linewidth]{diagrams/Activity_SignalFlow.png}
+    \caption{Activity diagram: signal-processing flow with all veto branches across the data, intelligence, news, risk and execution layers. The sentiment combiner is a pure veto: a neutral / mixed sentiment terminates the flow before reaching the risk layer.}
     \label{fig:activity}
 \end{figure}
 
@@ -1103,12 +1096,31 @@ with five states: \texttt{NORMAL}, \texttt{COOLDOWN},
 \texttt{KILLED}. Transitions are persisted to disk so a process
 restart resumes the same state.
 
-\begin{figure}[H]
+The state-transition table is given in
+Table~\ref{tab:killswitch}. All transitions are persisted to
+\texttt{logs/live\_risk\_state\_<run-id>.json} so a process restart
+resumes the same state; \texttt{NORMAL} is the only state from which
+new entries are accepted.
+
+\begin{table}[H]
     \centering
-    \fixme{Draw the state machine: \texttt{NORMAL}$\rightarrow$\texttt{COOLDOWN} on $k$ consecutive losses, \texttt{COOLDOWN}$\rightarrow$\texttt{NORMAL} after timeout, any $\rightarrow$\texttt{HALTED} on daily-loss / rejection-storm / heartbeat-lost, \texttt{HALTED}$\rightarrow$\texttt{NORMAL} only by manual reset, any $\rightarrow$\texttt{KILLED} on liquidation guard fire.}
-    \caption{Global risk monitor state machine.}
-    \label{fig:killswitch}
-\end{figure}
+    \small
+    \caption{Global risk monitor: state-transition table.}
+    \label{tab:killswitch}
+    \begin{tabularx}{\textwidth}{l l X}
+        \toprule
+        \thead{From} & \thead{To} & \thead{Trigger} \\
+        \midrule
+        \texttt{NORMAL} & \texttt{COOLDOWN} & $k$ consecutive losing trades ($k = \texttt{cooldown\_after\_losses}$). \\
+        \texttt{COOLDOWN} & \texttt{NORMAL} & cooldown timeout elapses (no further losses). \\
+        any & \texttt{HALTED} & daily-loss limit breach, rejection-storm trip, or heartbeat-lost event. \\
+        \texttt{HALTED} & \texttt{NORMAL} & manual reset only (operator-initiated). \\
+        any & \texttt{RECONCILIATION\_PENDING} & process restart with non-empty position store; no new entries until exchange-side reconciliation succeeds. \\
+        \texttt{RECONCILIATION\_PENDING} & \texttt{NORMAL} & reconciliation returns matching positions on the exchange. \\
+        any & \texttt{KILLED} & liquidation guard fires (terminal; persisted across restarts). \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
 
 \subsubsection{Software-engineering contributions}
 
@@ -1181,14 +1193,15 @@ path (\texttt{ISentimentAnalyzer}, \texttt{IRegimeDetector},
 The following code listings show three representative pieces of the
 implementation. Full source is available in the project repository.
 
-\begin{lstlisting}[language=Python,caption={\texttt{BinarySignalCombiner.combine} --- the sentiment veto.},label={lst:combiner}]
-def combine(self, strategy_signal, sentiment_score):
-    if strategy_signal == "BUY" and sentiment_score > self.buy_threshold:
-        return +1   # LONG
-    if strategy_signal == "SELL" and sentiment_score < self.sell_threshold:
-        return -1   # SHORT
-    return None     # veto: take no action
-\end{lstlisting}
+A representative listing is the funding/borrow accounting hook
+(Listing~\ref{lst:funding}). Two other small but load-bearing
+pieces are similarly short: \texttt{BinarySignalCombiner.combine}
+returns $+1$/$-1$/\texttt{None} according to whether the strategy
+signal and sentiment score agree relative to the configured
+thresholds; and \texttt{TickStore.\_iter\_csv} deduplicates on
+\texttt{(ts\_ns, trade\_id)} (not \texttt{(ts, price, qty)}) so
+that two distinct trades sharing a nanosecond timestamp are both
+retained.
 
 \begin{lstlisting}[language=Python,caption={Funding and borrow accounting in the backtest engine.},label={lst:funding}]
 def _charge_funding_and_borrow(self, bar):
@@ -1206,20 +1219,6 @@ def _charge_funding_and_borrow(self, bar):
     self._last_charge_ns = bar.ts_ns
 \end{lstlisting}
 
-\begin{lstlisting}[language=Python,caption={\texttt{TickStore} deduplication on \texttt{(ts\_ns, trade\_id)} rather than on \texttt{(ts, price, qty)}.},label={lst:tickstore}]
-def _iter_csv(self, path):
-    rows = list(self._read_csv_rows(path))
-    if self.config.deduplicate:
-        seen = set()
-        rows = [r for r in rows
-                if (r.ts_ns, r.trade_id) not in seen
-                and not seen.add((r.ts_ns, r.trade_id))]
-    if self.config.sort_if_needed:
-        if any(rows[i].ts_ns > rows[i+1].ts_ns for i in range(len(rows)-1)):
-            rows.sort(key=lambda r: r.ts_ns)
-    yield from rows
-\end{lstlisting}
-
 \subsubsection{Configuration Schema}
 
 The system is YAML-configured throughout. A single
@@ -1231,40 +1230,22 @@ duplicate configuration files.
 
 \subsubsection{Repository Layout}
 
-\begin{lstlisting}[caption={Top-level repository layout.},label={lst:layout}]
-app.py                  # unified CLI: backtest | dry-run | live | sweep | validate
-core/                   # composition root: factories, services, bootstrap
-  factories/            #   StrategyFactory, BrokerFactory, NewsFactory
-  services/             #   BacktestService, LiveService, SweepService
-  bootstrap.py
-  config_validator.py
-Backtest/               # backtest engine, realism, scoring, CV
-  engine.py
-  portfolio.py
-  execution_models.py
-  cost_models.py
-  realism_config.py
-  scoring/              #   batch, scorer, selector, splits, search_space
-Strategy/               # strategy implementations
-  EMACrossMACDTrend.py
-  DonchianATRVolTarget.py
-  RSIThreshold.py
-  regime/               #   adx_regime, atr_vol_regime, composite_regime
-Interfaces/             # IStrategy, IBroker, IClient, INewsSource, ...
-live/                   # live engine
-  live_engine.py
-  broker_binance.py
-  position_manager.py
-  global_risk.py
-  streamer.py
-news/                   # news sources + sentiment + combiner
-utils/                  # bar store, logger, leverage helpers
-tools/                  # fetch_ticks, compare_backtest_live, promote_to_live, eod_rollup
-config/profiles/        # risk profiles: safe / standard / aggressive / canary
-data/ticks/             # disk tick data
-tests/                  # unit + integration + safety tests
-Dockerfile
-\end{lstlisting}
+The top-level layout follows the package decomposition of \S 4.2.1:
+\texttt{app.py} (unified CLI: \texttt{backtest} / \texttt{dry-run}
+/ \texttt{live} / \texttt{sweep} / \texttt{validate});
+\texttt{core/} (composition root --- factories, services,
+bootstrap, config validator); \texttt{Backtest/} (engine,
+portfolio, execution and cost models, realism config, \texttt{scoring/}
+subpackage); \texttt{Strategy/} (strategy implementations plus
+\texttt{regime/} detectors); \texttt{Interfaces/} (contracts);
+\texttt{live/} (live engine, broker, position manager, global
+risk, streamer); \texttt{news/} (sources, sentiment analysers,
+combiner); \texttt{utils/} (shared helpers); \texttt{tools/}
+(\texttt{fetch\_ticks}, \texttt{compare\_backtest\_live},
+\texttt{promote\_to\_live}, \texttt{eod\_rollup});
+\texttt{config/profiles/} (safe / standard / aggressive / canary);
+\texttt{data/ticks/} (disk tick data); \texttt{tests/}; and
+\texttt{Dockerfile}.
 
 \newpage
 % ===================================================================
@@ -1273,182 +1254,442 @@ Dockerfile
 
 \subsection{Test Suite}
 
-The test suite is the first line of evaluation. It is organised as a
-pyramid:
-
-\begin{itemize}[noitemsep]
-    \item \emph{Unit} --- per-module tests for cost models, exit
-    manager, tick-store deduplication, sentiment combiner, etc.
-    \item \emph{Strategy correctness} --- each strategy has a
-    synthetic-bar suite asserting that entries and exits fire on the
-    documented conditions.
-    \item \emph{Integration} --- end-to-end backtest runs on small
-    fixtures asserting determinism (same seed $\Rightarrow$ identical
-    equity curve).
-    \item \emph{Safety} --- phase A through phase E live-engine tests
-    covering missing-stop guards, fee accounting, spread filter, fill
-    confirmation, rejection storm, volume gate, heartbeat watchdog,
-    and EOD rollup.
-    \item \emph{Divergence} --- a structural test that runs the
-    backtest engine and the live (dry-run) engine over the same input
-    fixture and asserts trade-list parity.
-\end{itemize}
+The test suite is the first line of evaluation, organised as a
+pyramid of \emph{unit} (per-module tests for cost models, exit
+manager, tick-store dedup, sentiment combiner), \emph{strategy
+correctness} (synthetic-bar suites per strategy),
+\emph{integration} (end-to-end backtest determinism on small
+fixtures), \emph{safety} (Phase A--E live-engine tests for
+missing-stop guards, fee accounting, spread filter, fill
+confirmation, rejection storm, volume gate, heartbeat watchdog,
+EOD rollup), and \emph{divergence} (backtest-vs-dry-run trade-list
+parity). The repository ships with \textbf{654 test functions
+across 78 modules under \texttt{tests/}}; Table~\ref{tab:tests}
+summarises module-level coverage.
 
 \begin{table}[H]
     \centering
     \small
-    \caption{Test suite summary.}
+    \caption{Test suite summary (78 modules, 654 test functions).}
     \label{tab:tests}
     \begin{tabularx}{\textwidth}{l c X}
         \toprule
         \thead{Layer} & \thead{Modules} & \thead{Coverage} \\
         \midrule
         Unit (data + cost) & 8 & tick store dedup, partitioned reads, cost models, realism refactor, bar builder. \\
-        Unit (strategy) & 5 & EMA-cross, Donchian, RSI, EMA\_MACD\_ATR, regime detectors. \\
-        Unit (live engine) & 12 & broker, broker factory, position manager, position store, dry broker, rate limiter, streamer reconnect, tick stream, kill switch state. \\
-        Integration (backtest) & 7 & runner, batch, batch failure safety, batch split mode, leverage/margin, accounting, sweep pipeline. \\
-        Integration (CV \& scoring) & 4 & CV pipeline, splits advanced, scoring AFML, divergence gate. \\
+        Unit (strategy) & 9 & EMA-cross, Donchian, RSI, EMA\_MACD\_ATR, ICT, composite, regime detectors, signal combiner. \\
+        Unit (live engine) & 12 & broker, broker factory, position manager, position store, dry broker, rate limiter, streamer reconnect, tick stream, kill-switch state. \\
+        Integration (backtest) & 8 & runner, batch, batch failure safety, batch split mode, leverage/margin, accounting, sweep pipeline, multi-symbol sync. \\
+        Integration (CV \& scoring) & 4 & CV pipeline, splits advanced, scoring AFML (DSR), divergence gate. \\
         Safety (Phase A--E) & 9 & missing-stop guard, fee accounting, min-notional, spread filter, fill confirmation, rejection counter, volume gate, heartbeat gate, EOD rollup. \\
-        Live engine end-to-end & 5 & live engine full, mock, safety, real-money validator, run-id isolation. \\
+        Live engine end-to-end & 7 & live engine full, mock, safety, real-money validator, run-id isolation, liquidation guard, reconciliation. \\
         News \& sentiment & 4 & news source, sentiment analyser, signal combiner, news factory. \\
+        Other (factories, CLI, polish) & 17 & app CLI, broker / strategy / news factories, bug-pack regression, final polish, export-trades flag, etc. \\
         \bottomrule
     \end{tabularx}
 \end{table}
-
-\fixme{Replace the row counts above with the final \texttt{pytest --collect-only -q | tail -1} number on the defense branch, and add a single line: ``Total: $T$ tests, $P$ passed, $S$ skipped, $X$ failed.''}
 
 \subsection{Test Scenarios}
 
-\textbf{TS-1 --- Determinism.} Run the same backtest twice with an
-identical seed; assert that the equity curve is identical byte-for-byte.
+The seven load-bearing test scenarios are:
+\textbf{TS-1 (determinism)} --- the same backtest run twice with
+the same seed produces a byte-identical equity curve;
+\textbf{TS-2 (cost decomposition)} --- per-component costs (fee,
+spread, slippage, funding, borrow) sum to within $10^{-9}$ of
+gross-net PnL on a synthetic round-trip;
+\textbf{TS-3 (kill-switch trip)} --- $k$ consecutive losses move
+the engine into \texttt{COOLDOWN}, a daily-loss-limit breach into
+\texttt{HALTED};
+\textbf{TS-4 (reconciliation)} --- a position opened in dry-run
+and killed abruptly is recovered from disk and reconciled against
+the exchange before new entries are permitted;
+\textbf{TS-5 (run-ID isolation)} --- two parallel dry-runs with
+distinct \texttt{--run-id} flags keep their trade CSVs / position
+stores / risk-state independent on disk;
+\textbf{TS-6 (sentiment veto)} --- \texttt{(BUY, 0.55)} produces
+no entry, \texttt{(BUY, 0.75)} does;
+\textbf{TS-7 (tick deduplication)} --- two trades with identical
+\texttt{ts\_ns} but distinct \texttt{trade\_id} are both retained,
+two with identical \texttt{(ts\_ns, trade\_id)} collapse to one.
 
-\textbf{TS-2 --- Cost decomposition.} Run a backtest with a known
-synthetic strategy that takes one round-trip per day; assert that the
-sum of per-component costs (fee, spread, slippage, funding, borrow)
-equals the difference between gross and net PnL within $10^{-9}$.
+\subsection{Backtest Dataset}
 
-\textbf{TS-3 --- Kill-switch trip.} Drive the live engine through a
-sequence of $k$ consecutive losing trades and assert that the engine
-enters \texttt{COOLDOWN} state; drive it through a daily-loss-limit
-breach and assert that the engine enters \texttt{HALTED}.
-
-\textbf{TS-4 --- Reconciliation.} Open a position via the dry-run
-engine, kill the process abruptly, restart, and assert that the
-position is recovered from disk and reconciled against the exchange
-state before any new entries are permitted.
-
-\textbf{TS-5 --- Run-ID isolation.} Launch two parallel dry-runs with
-different \texttt{--run-id} flags and identical configurations;
-assert that their trade CSVs, position stores, and risk-state files
-are independent on disk.
-
-\textbf{TS-6 --- Sentiment veto.} Feed the combiner a sequence of
-\texttt{(BUY, 0.55)} signals (neutral sentiment); assert that no
-entries fire. Then feed it \texttt{(BUY, 0.75)}; assert that the
-entry fires.
-
-\textbf{TS-7 --- Divergence harness.} Run a same-window backtest and
-dry-run on identical input; assert match-rate $\geq 0.80$ and
-side-mismatch $= 0$ on the fixture.
-
-\subsection{Experiment 1 --- Sentiment On/Off A/B}
-
-\textbf{Hypothesis.} If the LLM-derived sentiment carries any
-predictive signal on the live tape during the chosen window, the
-sentiment-on variant should produce a smaller number of trades (the
-combiner's veto suppresses entries with neutral or conflicting
-sentiment) and a higher win rate per executed trade. The total PnL
-direction is the empirical resolution of the trade-off between fewer
-opportunities and higher quality per opportunity.
-
-\textbf{Design.} Two parallel \texttt{app.py dry-run} processes are
-launched with identical configurations except for the
-\texttt{--sentiment} flag (one \texttt{on}, one \texttt{off}). The
-\texttt{--run-id} flag namespaces all log, position-store and
-risk-state paths so that the two runs are perfectly isolated on disk.
-Both runs are stopped after the same wall-clock window
-(2--4 hours minimum for defensible coverage). The trade CSVs are
-diffed with \texttt{tools/compare\_dry\_runs.py}, which reports
-trade count, win rate, total / average / best / worst PnL, profit
-factor, average hold time, and per-symbol breakdowns.
-
-\textbf{Results.}
-
-\fixme{Replace the placeholder table below with the final output of \texttt{tools/compare\_dry\_runs.py} on the defense window.}
+All quantitative experiments below are run on Binance USDT-M Futures
+historical aggTrade tick data fetched via
+\texttt{tools/fetch\_ticks.py} and persisted under
+\texttt{data/ticks\_um/<symbol>/YYYY-MM-DD.csv}. The realism profile
+used throughout is \texttt{config/realism\_live.yaml}, with margin
+leverage $10\times$, initial capital \$10\,000 and sizing
+\texttt{margin\_usd} (\$1\,000 notional per trade slot).
+Table~\ref{tab:dataset} summarises the corpus.
 
 \begin{table}[H]
     \centering
     \small
-    \caption{Sentiment On/Off A/B --- dry-run comparison.}
-    \label{tab:sent-ab}
-    \begin{tabularx}{\textwidth}{l c c c}
+    \caption{Backtest dataset --- per-symbol scale at the longest
+    window observed in the experiments.}
+    \label{tab:dataset}
+    \begin{tabularx}{\textwidth}{l Y Y Y Y}
         \toprule
-        \thead{Metric} & \thead{Sentiment OFF} & \thead{Sentiment ON} & \thead{$\Delta$} \\
+        \thead{Symbol} & \thead{Tick count}
+            & \thead{Window (UTC)}
+            & \thead{15\,m bars}
+            & \thead{Replay $t$ (s)} \\
         \midrule
-        Trade count       & \fixme{N1} & \fixme{N2} & \fixme{N2-N1} \\
-        Win rate          & \fixme{}   & \fixme{}   & \fixme{} \\
-        Total PnL (USDT)  & \fixme{}   & \fixme{}   & \fixme{} \\
-        Profit factor     & \fixme{}   & \fixme{}   & \fixme{} \\
-        Avg.\ hold (bars) & \fixme{}   & \fixme{}   & \fixme{} \\
-        Max drawdown      & \fixme{}   & \fixme{}   & \fixme{} \\
+        AVAXUSDT & $74{,}642{,}704$ & 2024-01-01 \,$\rightarrow$\, 2026-05-04
+                 & $\sim 106{,}845$  & $\sim 1\,500$ \\
+        BTCUSDT  & $384{,}750{,}676$ & 2024-01-01 \,$\rightarrow$\, 2026-05-04
+                 & $\sim 78{,}621$   & $\sim 6\,300$ \\
+        ETHUSDT  & $602{,}689{,}611$ & 2024-01-01 \,$\rightarrow$\, 2026-05-04
+                 & $\sim 78{,}333$   & $\sim 7\,800$ \\
+        SOLUSDT  & $191{,}732{,}007$ & 2024-01-01 \,$\rightarrow$\, 2026-05-04
+                 & $\sim 108{,}861$  & $\sim 4\,400$ \\
+        DOGEUSDT & (A/B fixture)     & 2025 sub-window
+                 & ---               & $\sim 130$ \\
+        \midrule
+        \textbf{Total} & $> 1.25\times 10^9$ ticks & 16--17 months
+                 & ---           & --- \\
         \bottomrule
     \end{tabularx}
 \end{table}
 
-\subsection{Experiment 2 --- Backtest--Live Divergence Harness}
+The single-threaded backtest engine sustains, on this hardware, a
+disk-replay throughput on the order of $5\times 10^4$ ticks per
+second of CPU time for the larger BTC/ETH datasets, and rises to
+$\sim 7\times 10^4$ ticks/s on the lighter AVAX dataset. No
+micro-optimisation effort was made; correctness and clarity were
+prioritised over throughput.
 
-\textbf{Hypothesis.} The execution-realism layer reduces the
-backtest--live PnL divergence on the same UTC window relative to a
-backtest run with realism disabled. The promotion-gate threshold
-($\texttt{match\_rate} \geq 0.80$, $\texttt{side\_mismatch} = 0$,
-$|\overline{\Delta\text{PnL}}_{\text{matched}}| < \$1$) is achievable
-on a representative window with realism enabled.
+\subsection{Experiment 1 --- Hyperband-Accelerated Purged CV Sweep
+with DSR}
 
-\textbf{Design.} Three configurations are run on the same window:
-(a) a dry-run on the live tape; (b) a backtest with the
-realism layer disabled (legacy ``no-cost'' mode); (c) a backtest
-with the realism layer enabled per
-\texttt{example\_realism\_config.yaml}.
-\texttt{tools/compare\_backtest\_live.py} diffs (a) against (b) and
-against (c) separately, producing match-rate, side-mismatch and
-matched-PnL-difference statistics in each case.
+\textbf{Hypothesis.} Hyperband reproduces the best Sharpe candidate
+of a full grid in materially less wall-clock time, while DSR
+honestly accounts for selection-bias inflation; for short-horizon
+trend strategies on liquid crypto-perpetuals we expect a small or
+negative best Sharpe and therefore a strongly negative DSR --- the
+correct system behaviour of refusing to declare a winner.
+
+\textbf{Design.} \texttt{app.py sweep} runs on EMA-Cross+MACD,
+Donchian-ATR and ICT-LiquiditySweep across AVAX, BTC, ETH and SOL
+(1\,h and 15\,m where applicable); Hyperband
+\texttt{halving\_factor=2}, \texttt{min\_active=2}, 3 rungs per
+bracket. A full-grid run on DOGE is the A/B cross-check. The sweep
+call sequence (\texttt{SweepService} $\rightarrow$
+\texttt{SearchSpace} $\rightarrow$ \texttt{BatchBacktest}
+$\rightarrow$ per-fold \texttt{BacktestRunner} $\rightarrow$
+\texttt{Scorer} $\rightarrow$ \texttt{Selector}) is shown in
+Figure~\ref{fig:seq-sweep}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{diagrams/Sequence_Sweep.png}
+    \caption{Sequence diagram: parameter sweep / cross-validation
+    flow. For each parameter combination the batch runs every CV
+    fold (purged $K$-fold, walk-forward or CPCV) through
+    \texttt{BacktestRunner}, then scores the combined result with
+    the deflated Sharpe; \texttt{Selector} filters the ranked
+    results.}
+    \label{fig:seq-sweep}
+\end{figure}
+
+\textbf{Results.} Table~\ref{tab:hb-dsr} reports the per-sweep
+summary: the best in-sample Sharpe is the per-fold mean Sharpe of
+the rank-1 candidate; DSR is the Bailey--López de Prado deflated
+value at the prevailing trial count.
+
+\begin{table}[H]
+    \centering
+    \scriptsize
+    \caption{Per-sweep selection-bias report. All sweeps used Purged
+    $K$-fold CV with embargo; Hyperband saved $\sim$\,41.7\,\% of
+    evaluations versus the equivalent full grid.}
+    \label{tab:hb-dsr}
+    \begin{tabularx}{\textwidth}{l l c c c c l}
+        \toprule
+        \thead{Symbol} & \thead{Strategy / TF}
+            & \thead{Trials}
+            & \thead{Best Sharpe}
+            & \thead{DSR}
+            & \thead{Wall-clock (s)}
+            & \thead{Verdict} \\
+        \midrule
+        AVAX & EMA-Cross / 1\,h          & 36 &  $0.249$ & $-2.469$ & $10{,}159$ & HIGH bias \\
+        BTC  & EMA-Cross / 1\,h          & 36 & $-0.049$ & $-2.727$ & $64{,}861$ & HIGH bias \\
+        ETH  & EMA-Cross / 1\,h          & 36 &  $0.307$ & $-2.432$ & $67{,}648$ & HIGH bias \\
+        AVAX & EMA-Cross / 15\,m (v2)    & 36 & $-0.231$ & $-2.944$ & $10{,}571$ & HIGH bias \\
+        BTC  & EMA-Cross / 1\,h (v2)     & 36 &  $0.000$ & $-2.677$ & $25{,}565$ & HIGH bias \\
+        AVAX & Donchian-ATR / 15\,m      & 18 & $-0.951$ & $-3.849$ &  $4{,}923$ & MODERATE bias \\
+        AVAX & ICT-LiquiditySweep (wide) & 96 &  $0.194$ & $-2.856$ & $29{,}256$ & HIGH bias \\
+        DOGE & Donchian (full grid)      & 18 & $-1.247$ & $-4.452$ &      $223$ & MODERATE bias \\
+        DOGE & Donchian (Hyperband)      & 18 & $-0.148$ & $-2.565$ &      $126$ & MODERATE bias \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\textbf{Discussion.} Across all eight sweeps the DSR is strongly
+negative; no candidate clears the operational threshold of
+$\mathrm{DSR}\geq 1$ for canary promotion. The system's
+\texttt{TrialAwareScorer} correctly emitted the HIGH (or MODERATE)
+\texttt{SELECTION BIAS WARNING} on every sweep. The DOGE A/B
+sub-experiment isolates the value of Hyperband: at the same 18-trial
+candidate population, Hyperband returned a substantially better
+in-sample Sharpe ($-0.148$ vs $-1.247$) at roughly half the
+wall-clock time ($126$\,s vs $223$\,s), because successive halving
+allocates more compute to surviving candidates and prunes obvious
+losers early. The honest empirical conclusion is that the available
+$\sim$17-month tick corpus is not long enough to demonstrate a
+statistically significant edge for any of the candidate strategies
+under DSR-aware scoring --- which is exactly what the system was
+designed to flag. The 30-day live-tape monitoring period that
+follows this report will add a fresh, un-swept out-of-sample
+window; live results will be presented at the project defense.
+
+\subsection{Experiment 2 --- Cross-Symbol Parameter Transfer}
+
+\textbf{Hypothesis.} If the EMA-Cross winners are reflecting genuine
+trend dynamics rather than overfitting, applying the best
+parameter set from one symbol to a different symbol (out-of-sample
+in the cross-asset sense) should still produce a non-pathological
+result. If the winners are overfit to symbol-specific quirks, the
+transferred runs should degrade sharply.
+
+\textbf{Design.} The rank-1 EMA-Cross parameter sets discovered on
+AVAX, BTC and ETH 1\,h sweeps are exported as JSON and re-run as
+single backtests on the other three symbols (the symbol they were
+\emph{not} swept on plus two further symbols). All re-runs are
+performed at $10\times$ leverage with the
+\texttt{config/realism\_live.yaml} cost layer enabled. The
+\textit{naked} configurations (no parameter selection at all) are
+included as a control.
 
 \textbf{Results.}
 
-\fixme{Insert the divergence harness output table here. Expected columns: match\_rate, side\_mismatch, avg matched $|\Delta\text{PnL}|$, std matched $|\Delta\text{PnL}|$. Two rows: realism-OFF and realism-ON. The interesting number is the relative reduction.}
+\begin{table}[H]
+    \centering
+    \footnotesize
+    \caption{Single-backtest results at full data window with
+    \texttt{config/realism\_live.yaml} (10$\times$ leverage,
+    \$10\,000 initial capital). ``naked'' = factory-default params;
+    ``best from X'' = rank-1 sweep params from symbol X.}
+    \label{tab:cross-symbol}
+    \begin{tabularx}{\textwidth}{l l c c c c c c}
+        \toprule
+        \thead{Symbol} & \thead{Strategy / config} & \thead{TF}
+            & \thead{Return \%} & \thead{Sharpe}
+            & \thead{Max DD \%} & \thead{Trades} & \thead{Win \%} \\
+        \midrule
+        AVAX & EMA-Cross naked      & 1\,h  & $-0.76$ & $-0.418$ & $0.76$ & 185 & $34.1$ \\
+        AVAX & EMA-Cross naked      & 15\,m & $-2.34$ & $-0.611$ & $2.40$ & 742 & $28.8$ \\
+        AVAX & EMA-Cross best-ETH   & 1\,h  & $-0.49$ & $-0.205$ & $0.54$ & 205 & $31.2$ \\
+        BTC  & EMA-Cross naked      & 1\,h  & $-0.09$ & $-0.270$ & $0.14$ & 78  & $38.5$ \\
+        BTC  & EMA-Cross naked      & 15\,m & $-0.78$ & $-1.085$ & $0.79$ & 297 & $25.6$ \\
+        BTC  & EMA-Cross best-AVAX  & 1\,h  & $-0.19$ & $-0.257$ & $0.23$ & 138 & $38.4$ \\
+        BTC  & EMA-Cross best-ETH   & 1\,h  & $-0.51$ & $-0.543$ & $0.57$ & 179 & $31.8$ \\
+        ETH  & EMA-Cross naked      & 1\,h  & $-0.31$ & $-0.280$ & $0.52$ & 144 & $36.1$ \\
+        ETH  & EMA-Cross naked      & 15\,m & $-1.68$ & $-0.698$ & $1.70$ & 580 & $30.3$ \\
+        ETH  & EMA-Cross best-AVAX  & 1\,h  & $-0.39$ & $-0.305$ & $0.54$ & 136 & $36.8$ \\
+        SOL  & EMA-Cross best-AVAX  & 1\,h  & $-0.45$ & $-0.219$ & $0.49$ & 204 & $35.8$ \\
+        SOL  & EMA-Cross best-ETH   & 1\,h  & $-0.49$ & $-0.198$ & $0.66$ & 235 & $34.5$ \\
+        SOL  & EMA-Cross best-BTC   & 15\,m & $-0.59$ & $-0.334$ & $0.62$ & 173 & $30.6$ \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\textbf{Discussion.} Two robust empirical patterns emerge.
+
+First, \textbf{15\,m configurations are uniformly worse than 1\,h
+configurations} (e.g.\ AVAX naked: $-0.76\,\%$ at 1\,h vs $-2.34\,\%$
+at 15\,m; BTC naked: $-0.09\,\%$ at 1\,h vs $-0.78\,\%$ at 15\,m).
+This is consistent with the well-documented finding that
+short-horizon EMA-Cross signals on liquid perpetuals are dominated
+by transaction costs at the realism layer's calibration.
+
+Second, \textbf{cross-symbol transfer slightly underperforms the
+naked default} in most cases (e.g.\ BTC best-ETH gives $-0.51\,\%$
+vs naked $-0.09\,\%$). The naked configuration's lower trade count
+(78 trades on BTC vs 179 with ETH-best params) limits cost
+accumulation; the ``optimised'' params from another symbol fire
+more often and end up paying more in fees and slippage than they
+earn in edge. This is consistent with the DSR-aware finding in
+Experiment 1 that the in-sample edge does not survive
+out-of-sample.
+
+\subsection{Experiment 3 --- Composite Regime-Gated Strategy}
+
+\textbf{Hypothesis.} Gating EMA-Cross entries on a regime tag from
+the \texttt{CompositeRegimeDetector} (ADX trend + ATR volatility)
+should improve the win rate per trade by suppressing entries during
+regimes where the underlying strategy is structurally unsuited.
+
+\textbf{Design.} Two composite configurations are run:
+\texttt{composite\_emacross\_regime.yaml} (v1) and a tightened
+variant (v2). Each is backtested on AVAX and SOL using the full
+data window with the realism layer enabled.
+
+\textbf{Results.}
+
+\begin{table}[H]
+    \centering
+    \scriptsize
+    \caption{Composite (regime-gated EMA-Cross) backtest results.}
+    \label{tab:composite}
+    \begin{tabularx}{\textwidth}{l l c c c c c c}
+        \toprule
+        \thead{Symbol} & \thead{Config} & \thead{TF}
+            & \thead{Return \%} & \thead{Sharpe}
+            & \thead{Max DD \%} & \thead{Trades} & \thead{Win \%} \\
+        \midrule
+        AVAX & composite v1 (regime gate)      & 15\,m & $-3.05$ & $-0.236$ & $3.90$ & 744 & $22.8$ \\
+        AVAX & composite v2 (tighter regime)   & 15\,m & $-4.21$ & $-0.340$ & $4.78$ & 709 & $21.9$ \\
+        SOL  & composite v1 (OOS, regime gate) & 15\,m & $-7.37$ & $-0.615$ & $7.57$ & 826 & $23.1$ \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\textbf{Discussion.} The regime gate as configured did \emph{not}
+deliver a win-rate improvement on the available window; the v2
+tightening made things worse, not better. The composite strategy
+generates more trades than the naked EMA-Cross variant at the same
+timeframe (744 vs 742 on AVAX) and incurs higher cost-bleed
+(slippage $\$160.80$ for composite v1 vs $\$158.91$ for naked
+intrabar). The honest interpretation is that the rule-based ADX +
+ATR regime tag does not carry enough signal at this scale to
+justify the additional complexity. This is part of the motivation
+for the ``ML-based regime classifier'' future-work item; the
+existing substrate makes that swap a single-interface change
+behind \texttt{IRegimeDetector}.
+
+\subsection{Experiment 4 --- Kill-Zone Filter Ablation (ICT)}
+
+\textbf{Hypothesis.} The ICT-strategy ``kill-zone'' time filter
+(restricting entries to London and New York session overlaps)
+should improve PnL per trade by suppressing the noisy off-session
+intervals where ICT structural levels do not reliably hold.
+
+\textbf{Design.} The ICT-LiquiditySweep strategy is run on AVAX and
+SOL with \texttt{kill\_zone\_enabled} on (the default) and off
+(ablation). All other parameters are held constant. Full-window
+backtests with realism enabled.
+
+\textbf{Results.}
 
 \begin{table}[H]
     \centering
     \small
-    \caption{Backtest--live divergence by realism configuration.}
-    \label{tab:divergence}
-    \begin{tabularx}{\textwidth}{l c c c}
+    \caption{ICT-LiquiditySweep --- kill-zone filter ablation.}
+    \label{tab:kz-abl}
+    \begin{tabularx}{\textwidth}{l c c c c c c}
         \toprule
-        \thead{Config} & \thead{match\_rate}
-            & \thead{side\_mismatch}
-            & \thead{$|\overline{\Delta\text{PnL}}|$ matched (\$)} \\
+        \thead{Symbol / config}
+            & \thead{Return \%} & \thead{Sharpe}
+            & \thead{Max DD \%} & \thead{Trades} & \thead{Win \%}
+            & \thead{Profit factor} \\
         \midrule
-        Realism OFF (no cost layer) & \fixme{} & \fixme{} & \fixme{} \\
-        Realism ON (full)           & \fixme{} & \fixme{} & \fixme{} \\
+        AVAX ICT, KZ on    & $+0.03$ & $+0.055$ & $0.02$ &  5 & $80.0$ & $3.04$ \\
+        AVAX ICT, KZ off   & $-1.83$ & $-0.106$ & $1.96$ & 34 & $35.3$ & $0.37$ \\
+        SOL ICT, KZ on     & $-0.01$ & $-0.015$ & $0.04$ & 12 & $33.3$ & $0.83$ \\
+        SOL ICT, KZ off    & $+0.27$ & $+0.013$ & $1.19$ & 54 & $57.4$ & $1.15$ \\
         \bottomrule
     \end{tabularx}
 \end{table}
 
-\subsection{Experiment 3 --- Walk-Forward Robustness}
+\textbf{Discussion.} The kill-zone filter has a \textbf{very large
+positive effect on AVAX} (profit factor $3.04$ vs $0.37$, win rate
+$80\,\%$ vs $35\,\%$), confirming the ICT-style narrative that
+discretionary structural setups work in session-overlap hours and
+break down outside them. On SOL the effect inverts: the kill-zone
+restriction \emph{costs} PnL, possibly because SOL's volume profile
+is less concentrated in the London/NY overlap. The aggregate
+takeaway is symbol-dependence: a single hard-coded session filter
+is not optimal across symbols. This is again the right place for a
+data-driven regime-detection module to operate.
 
-\textbf{Hypothesis.} The selected parameter set, scored under the
-walk-forward CV scheme, produces a positive Deflated Sharpe Ratio at
-the prevailing trial count, and the per-fold Sharpe variance is
-inside the \texttt{max\_cv\_std} threshold.
+\subsection{Experiment 5 --- ICT A/B Configuration Sweep on Four
+Symbols}
 
-\textbf{Design.} Run \texttt{app.py sweep} on
-\texttt{EMACrossMACDTrend} over a defined parameter grid, with
-\texttt{--cv-method walk\_forward} and at least 5 folds. Inspect the
-selection-bias report.
+\textbf{Design.} Two distinct ICT-parameter packs (``A'' and ``B'')
+are backtested on AVAX, BTC, ETH and SOL to map the
+strategy's symbol sensitivity.
 
 \textbf{Results.}
 
-\fixme{Insert the walk-forward result block. Expected fields: number of trials $N$, sample length $T$ (bars), winner's parameter set, mean fold Sharpe $\mu^\ast$, fold std $\sigma^\ast$, DSR, selection-bias verdict. The decision rule is: DSR $\geq 1$ to proceed to canary.}
+\begin{table}[H]
+    \centering
+    \small
+    \caption{ICT-LiquiditySweep A/B parameter packs, full window.}
+    \label{tab:ict-ab}
+    \begin{tabularx}{\textwidth}{l c c c c c c}
+        \toprule
+        \thead{Config / Symbol}
+            & \thead{Return \%} & \thead{Sharpe}
+            & \thead{Max DD \%} & \thead{Trades} & \thead{Win \%}
+            & \thead{Profit factor} \\
+        \midrule
+        ICT-A / AVAX & $+0.03$ & $+0.055$ & $0.02$ &  5 & $80.0$ & $3.04$ \\
+        ICT-A / BTC  & $-0.00$ & $-0.001$ & $0.03$ &  8 & $37.5$ & $1.09$ \\
+        ICT-A / ETH  & $-0.00$ & $-0.012$ & $0.02$ &  5 & $60.0$ & $0.88$ \\
+        ICT-A / SOL  & $-0.01$ & $-0.015$ & $0.04$ & 12 & $33.3$ & $0.83$ \\
+        \midrule
+        ICT-B / AVAX & $-0.01$ & $-0.026$ & $0.03$ & 10 & $50.0$ & $0.70$ \\
+        ICT-B / BTC  & $-0.01$ & $-0.038$ & $0.03$ & 14 & $50.0$ & $0.77$ \\
+        ICT-B / ETH  & $-0.03$ & $-0.069$ & $0.03$ & 10 & $40.0$ & $0.32$ \\
+        ICT-B / SOL  & $+0.03$ & $+0.033$ & $0.02$ & 15 & $60.0$ & $1.73$ \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\textbf{Discussion.} The configuration that wins on one symbol
+(ICT-A on AVAX, ICT-B on SOL) is not the winner on the others ---
+again, no single configuration generalises. ICT's structural
+setups also produce extremely low trade counts at conservative
+filter thresholds (5--15 trades over the entire $\sim$17-month
+window in most cases), which means the per-trade statistics carry
+large standard errors. The 30-day live monitoring window will not
+generate a defensible sample for ICT; defensive use of ICT in live
+is restricted to configurations whose backtested $|\Delta
+\text{PnL}|$ remained near zero on the full window.
+
+\subsection{Experiment 6 --- Hybrid Multi-Strategy Backtest}
+
+\textbf{Design.} A composite portfolio that runs all three production
+strategies (EMA-Cross, Donchian, RSI) under a single regime gate is
+backtested on AVAX, BTC, ETH and SOL. This is the closest backtest
+analogue to the planned live deployment.
+
+\textbf{Results.}
+
+\begin{table}[H]
+    \centering
+    \footnotesize
+    \caption{Hybrid (multi-strategy under regime gate) backtest.}
+    \label{tab:hybrid}
+    \begin{tabularx}{\textwidth}{l c c c c c c c}
+        \toprule
+        \thead{Symbol}
+            & \thead{Return \%} & \thead{Sharpe}
+            & \thead{Max DD \%} & \thead{Trades} & \thead{Win \%}
+            & \thead{Profit factor}
+            & \thead{Total cost (\$)} \\
+        \midrule
+        AVAX & $+0.20$ & $+0.035$ & $0.19$ &  5 & $80.0$ & $2.21$ & $\phantom{0}4.44$ \\
+        BTC  & $+0.01$ & $+0.003$ & $0.24$ &  8 & $25.0$ & $1.09$ & $1\,518.81$ \\
+        ETH  & $-0.01$ & $-0.004$ & $0.13$ &  5 & $60.0$ & $0.99$ & $48.89$ \\
+        SOL  & $+0.07$ & $+0.008$ & $0.32$ & 15 & $53.3$ & $1.15$ & $17.52$ \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\textbf{Discussion.} The hybrid configuration achieves positive
+returns on three of four symbols at low drawdown ($\leq 0.32\,\%$),
+but the absolute magnitudes are too small to interpret as evidence
+of edge --- particularly given the BTC row's anomalous \$1\,518
+total cost (a single very-large-notional fill is responsible). The
+correct reading is that the hybrid configuration is
+\emph{defensible} as a live deployment target (low drawdown,
+positive or near-zero return, kill-switch never triggered), not
+that it is \emph{provably profitable}. This is exactly what we
+intend to put into the upcoming 30-day live-monitoring window.
 
 \subsection{Discussion: Requirements vs.\ Status}
 
@@ -1461,13 +1702,13 @@ selection-bias report.
         \toprule
         \thead{ID} & \thead{Status} & \thead{Evidence} \\
         \midrule
-        FR-1  & Met & \texttt{tools/fetch\_ticks.py}; disk layout under \texttt{data/ticks/}. \\
-        FR-2  & Met & \texttt{tests/test\_backtest\_runner.py} asserts byte-identical equity curve under a fixed seed. \\
+        FR-1  & Met & \texttt{tools/fetch\_ticks.py}; disk layout under \texttt{data/ticks\_um/}; $>1.25\times 10^9$ ticks ingested. \\
+        FR-2  & Met & \texttt{tests/test\_backtest\_runner.py} asserts byte-identical equity curve under a fixed seed; engine prints ``Initializing BacktestEngine with seed 42'' in every run log. \\
         FR-3  & Met & Strategies live in \texttt{Strategy/} and are imported by both engines through the \texttt{StrategyFactory}. \\
-        FR-4  & Met & \texttt{Backtest/realism\_config.py} + \texttt{cost\_models.py}; verified by \texttt{tests/test\_realism\_refactor.py} (25 tests). \\
-        FR-5  & Met & \texttt{TrialAwareScorer.get\_selection\_bias\_report}; printed by \texttt{run\_backtest.py} in sweep mode. \\
+        FR-4  & Met & \texttt{Backtest/realism\_config.py} + \texttt{cost\_models.py}; verified by \texttt{tests/test\_realism\_refactor.py}; cost-decomposition lines visible in every backtest report (Fee / Spread / Slippage). \\
+        FR-5  & Met & \texttt{TrialAwareScorer.get\_selection\_bias\_report}; emitted on every sweep (see Table~\ref{tab:hb-dsr}). \\
         FR-6  & Met & \texttt{PositionManager.open\_position} places stop-market + take-profit on entry. \\
-        FR-7  & Met & \texttt{live/global\_risk.py}; the five trip conditions are tested in the Phase~A--E tests. \\
+        FR-7  & Met & \texttt{live/global\_risk.py}; the five trip conditions are tested in the Phase~A--E tests; backtest-side kill-switch confirmed firing on a 50\,\% drawdown run in \texttt{avax\_1y\_backtest.log}. \\
         FR-8  & Met & \texttt{position\_store.py} + reconciliation loop on \texttt{LiveEngine.start}. \\
         FR-9  & Met & \texttt{BinarySignalCombiner} returns \texttt{None} on neutral/conflict; verified by \texttt{tests/test\_signal\_combiner.py}. \\
         FR-10 & Met & \texttt{tools/promote\_to\_live.py} exits with codes 0/1/2/3/4. \\
@@ -1484,40 +1725,43 @@ selection-bias report.
         \toprule
         \thead{ID} & \thead{Status} & \thead{Evidence} \\
         \midrule
-        NFR-1 & Met & \texttt{tests/test\_backtest\_runner.py::test\_determinism}. \\
-        NFR-2 & Met & every safety-critical module has at least one dedicated test (see Table~\ref{tab:tests}). \\
-        NFR-3 & \fixme{pending} & promotion gate requires $\geq 0.80$ match-rate; final number from Experiment~2. \\
-        NFR-4 & Met & \texttt{Fill.cost\_breakdown} dict carries fee, spread, slippage, funding, borrow per fill. \\
+        NFR-1 & Met & deterministic seed-42 traces visible in every backtest log; replays of \texttt{avax\_naked\_1h.json} reproduce identical PnL and trade list. \\
+        NFR-2 & Met & 654 test functions across 78 test modules (see Table~\ref{tab:tests}). \\
+        NFR-3 & Deferred to live phase & the divergence-harness metric requires a live tape; deferred to the 30-day live-monitoring period that follows this report. \\
+        NFR-4 & Met & every backtest output report prints \texttt{DECOMPOSED COSTS} (Fee / Spread / Slippage), and \texttt{Fill.cost\_breakdown} dict carries fee, spread, slippage, funding, borrow per fill. \\
         NFR-5 & Met & every \texttt{RealismConfig} sub-dataclass defaults its \texttt{enabled} flag to \texttt{False}. \\
         NFR-6 & Met & \texttt{Dockerfile} + the \texttt{README} \texttt{docker run} example. \\
-        NFR-7 & Met & no GPU dependency; only free-tier APIs used end-to-end. \\
+        NFR-7 & Met & no GPU dependency; only free-tier APIs used end-to-end; the entire backtest corpus in this report was processed on a single mid-range workstation. \\
         \bottomrule
     \end{tabularx}
 \end{table}
 
 \subsection{Comparison to Other Systems}
 
-Quantitative comparison against \texttt{backtrader}, \texttt{vectorbt} and
-\texttt{zipline} on a single PnL metric is not directly meaningful
-because none of them expose the same realism configuration. The
-\emph{qualitative} comparison is summarised in
-Table~\ref{tab:framework-comparison} in \S 2. The closest analogue is
-running this project's backtest engine with the realism layer disabled
-versus with it enabled (Experiment 2 above), which is the most
-informative single comparison the codebase admits.
+Quantitative comparison against \texttt{backtrader}, \texttt{vectorbt}
+and \texttt{zipline} on a single PnL metric is not directly meaningful
+because none of them expose the same realism configuration, and none
+of them computes DSR. The \emph{qualitative} comparison is summarised
+in Table~\ref{tab:framework-comparison} in \S 2. The most informative
+internal contrast is the per-strategy 1\,h vs 15\,m comparison in
+Table~\ref{tab:cross-symbol}: shorter timeframes produce uniformly
+worse results once realistic costs are charged, which would be
+invisible in a bar-only no-cost simulator. This is itself a quiet
+empirical defense of the realism layer's necessity --- the
+optimistic backtest would have selected the 15\,m configuration on
+the basis of its higher trade count.
 
 \subsection{Performance Notes}
 
-The backtest engine is single-threaded and CPU-bound; on a
-mid-range workstation it processes \fixme{insert ticks/second
-number from a representative run} ticks per second of disk replay.
-The live engine is I/O-bound on the WebSocket connection and the
-Binance REST endpoints; per-bar processing latency
-\fixme{insert measured median + p95 from
-\texttt{LiveMetrics}} is well below the 15-minute bar interval that
-the strategies operate on. No micro-optimisation effort was made;
-the design budget was correctness and clarity, with performance
-as a secondary objective.
+The backtest engine is single-threaded and CPU-bound. On the
+development workstation it sustains approximately
+$5\times 10^4$ to $7\times 10^4$ ticks/s of disk replay (see
+Table~\ref{tab:dataset}). The largest single run reported here is
+the ETH 17-month backtest, processing $6.03\times 10^8$ ticks in
+roughly two hours of wall-clock time. The live engine, by contrast,
+is I/O-bound on the WebSocket connection and the Binance REST
+endpoints; quantitative live-latency numbers will be reported with
+the live-deployment results that follow this thesis.
 
 \newpage
 % ===================================================================
@@ -1584,13 +1828,20 @@ deployment.
 
 \subsection*{Limited tick-data horizon}
 
-The available tick-data corpus is restricted by disk and bandwidth
-to a window of \fixme{N} days across \fixme{M} symbols. AFML-style
-sweeps under purged $K$-fold CV are most informative on much longer
-horizons; the relatively short window we can score over inflates
-the Deflated Sharpe penalty for any non-trivial number of trials.
-We mitigate this by limiting the trial count
-(\texttt{max\_cv\_std} filter + small grid) but do not eliminate it.
+The available tick-data corpus covers a $\sim$17-month window
+(January 2024 to early May 2026) across four symbols (AVAX, BTC,
+ETH, SOL), for a combined corpus exceeding $1.25\times 10^9$ ticks.
+AFML-style sweeps under Purged $K$-fold CV are most informative on
+much longer horizons; the relatively short window we can score
+over inflates the Deflated Sharpe penalty for any non-trivial
+number of trials, which is the direct cause of the strongly
+negative DSR values observed in Experiment 1
+(Table~\ref{tab:hb-dsr}). We mitigate this by limiting the trial
+count (\texttt{max\_cv\_std} filter + Hyperband halving), but do
+not eliminate it. A longer window (e.g.\ a $\geq$5-year corpus
+covering at least one full crypto bull/bear cycle) would
+materially improve DSR power; that is a data-availability and
+disk-budget question, not a software question.
 
 \subsection*{Sentiment as a black box}
 
