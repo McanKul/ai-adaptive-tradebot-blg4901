@@ -218,6 +218,54 @@ class BinanceVisionFetcher:
         
         return False
     
+    # Field name aliases across Binance Vision datasets.  ``aggTrades`` and
+    # ``trades`` differ in both column order and names, so we map by name
+    # when a header is present and fall back to positional indices otherwise.
+    _COL_ALIASES = {
+        "trade_id": ("agg_trade_id", "id", "aggtradeid", "tradeid"),
+        "price": ("price",),
+        "qty": ("quantity", "qty"),
+        "ts": ("transact_time", "time", "timestamp"),
+        "bm": ("is_buyer_maker", "isbuyermaker"),
+    }
+
+    def _resolve_columns(self, first_row: list) -> tuple[dict, bool]:
+        """Resolve column indices and whether *first_row* is a header.
+
+        Binance Vision CSVs now ship a header row; we map our fields from it
+        by name so both layouts work:
+
+            aggTrades: agg_trade_id, price, quantity, first_trade_id,
+                       last_trade_id, transact_time, is_buyer_maker
+            trades:    id, price, qty, quote_qty, time, is_buyer_maker
+
+        For older header-less files we fall back to positional indices keyed
+        off the configured ``data_type`` (timestamp is at column 5 for
+        aggTrades but column 4 for trades — the original bug).
+        """
+        is_header = False
+        if first_row:
+            try:
+                float(first_row[0])
+            except (ValueError, IndexError):
+                is_header = True
+
+        if is_header:
+            norm = [c.strip().lower() for c in first_row]
+            cols = {
+                key: next((norm.index(n) for n in names if n in norm), None)
+                for key, names in self._COL_ALIASES.items()
+            }
+            if all(cols[k] is not None for k in ("price", "qty", "ts")):
+                return cols, True  # header recognised — map by name
+
+        # Header-less (or unrecognised header): positional fallback.
+        if self.config.data_type == "trades":
+            cols = {"trade_id": 0, "price": 1, "qty": 2, "ts": 4, "bm": 5}
+        else:  # aggTrades
+            cols = {"trade_id": 0, "price": 1, "qty": 2, "ts": 5, "bm": 6}
+        return cols, is_header
+
     def extract_and_normalize(
         self,
         zip_path: Path,
@@ -226,11 +274,14 @@ class BinanceVisionFetcher:
     ) -> int:
         """
         Extract ZIP file and normalize to our tick schema.
-        
-        Binance aggTrades CSV format:
-            agg_trade_id, price, quantity, first_trade_id, last_trade_id, 
-            timestamp_ms, is_buyer_maker, is_best_match
-        
+
+        Handles both Binance Vision datasets, which differ in layout:
+            aggTrades: agg_trade_id, price, quantity, first_trade_id,
+                       last_trade_id, transact_time, is_buyer_maker
+            trades:    id, price, qty, quote_qty, time, is_buyer_maker
+        Columns are mapped by header name when present, with a positional
+        fallback for header-less files.
+
         Returns:
             Number of ticks processed
         """
@@ -250,44 +301,56 @@ class BinanceVisionFetcher:
                 with zf.open(csv_name) as csv_file:
                     # Read and normalize
                     reader = csv.reader(io.TextIOWrapper(csv_file, encoding='utf-8'))
-                    
+
+                    first_row = next(reader, None)
+                    if first_row is None:
+                        log.warning(f"Empty CSV in {zip_path}")
+                        return 0
+
+                    cols, is_header = self._resolve_columns(first_row)
+                    ts_i, p_i, q_i = cols["ts"], cols["price"], cols["qty"]
+                    bm_i, id_i = cols.get("bm"), cols.get("trade_id")
+                    min_len = max(i for i in (ts_i, p_i, q_i) if i is not None) + 1
+
+                    def _emit(writer, row):
+                        if len(row) < min_len:
+                            return 0
+                        try:
+                            timestamp_ms = int(row[ts_i])
+                            price = float(row[p_i])
+                            quantity = float(row[q_i])
+                            is_buyer_maker = (
+                                row[bm_i].strip().lower() == 'true'
+                                if bm_i is not None and len(row) > bm_i else False
+                            )
+                            trade_id = (
+                                row[id_i] if id_i is not None and len(row) > id_i else ''
+                            )
+                            writer.writerow([
+                                timestamp_ms * 1_000_000,
+                                symbol,
+                                f"{price:.8f}",
+                                f"{quantity:.8f}",
+                                'sell' if is_buyer_maker else 'buy',
+                                trade_id,
+                            ])
+                            return 1
+                        except (ValueError, IndexError):
+                            log.debug(f"Skipping malformed row: {row}")
+                            return 0
+
                     with open(output_path, 'w', newline='', encoding='utf-8') as out_f:
                         writer = csv.writer(out_f)
                         # Write header matching our Tick schema
                         writer.writerow([
-                            'timestamp_ns', 'symbol', 'price', 'volume', 
+                            'timestamp_ns', 'symbol', 'price', 'volume',
                             'side', 'trade_id'
                         ])
-                        
+                        # If the first row was data (no header), include it.
+                        if not is_header:
+                            tick_count += _emit(writer, first_row)
                         for row in reader:
-                            if len(row) < 6:
-                                continue
-                            
-                            try:
-                                # Parse Binance format
-                                agg_trade_id = int(row[0])
-                                price = float(row[1])
-                                quantity = float(row[2])
-                                timestamp_ms = int(row[5])
-                                is_buyer_maker = row[6].lower() == 'true' if len(row) > 6 else False
-                                
-                                # Convert to our schema
-                                timestamp_ns = timestamp_ms * 1_000_000
-                                side = 'sell' if is_buyer_maker else 'buy'
-                                
-                                writer.writerow([
-                                    timestamp_ns,
-                                    symbol,
-                                    f"{price:.8f}",
-                                    f"{quantity:.8f}",
-                                    side,
-                                    agg_trade_id
-                                ])
-                                tick_count += 1
-                                
-                            except (ValueError, IndexError) as e:
-                                log.debug(f"Skipping malformed row: {row}")
-                                continue
+                            tick_count += _emit(writer, row)
             
             log.info(f"Extracted {tick_count:,} ticks to {output_path}")
             return tick_count
