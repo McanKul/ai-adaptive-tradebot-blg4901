@@ -4,7 +4,7 @@ WORKDIR /build
 
 # TA-Lib C library — HTTPS source with checksum verification
 ARG TALIB_VERSION=0.6.4
-ARG TALIB_SHA256=9cea20e82e4d41c89a5e4e1e30c0b8b631e027dd2c37cda3e9dab4f1b6e0ac37
+ARG TALIB_SHA256=aa04066d17d69c73b1baaef0883414d3d56ab3775872d82916d1cdb376a3ae86
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential wget ca-certificates \
     && wget -q "https://github.com/TA-Lib/ta-lib/releases/download/v${TALIB_VERSION}/ta-lib-${TALIB_VERSION}-src.tar.gz" \
