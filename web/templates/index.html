@@ -23,6 +23,7 @@
 
   <nav class="tabs">
     <button class="tab active" data-tab="run">Run</button>
+    <button class="tab" data-tab="data">Data</button>
     <button class="tab" data-tab="files">Config Files</button>
     <button class="tab" data-tab="env">Environment</button>
   </nav>
@@ -33,6 +34,10 @@
       <label class="card-label">Command</label>
       <div class="command-bar" id="commandBar"><!-- command buttons injected --></div>
       <p class="command-help" id="commandHelp"></p>
+      <div class="dataset-toggle" id="datasetToggle" hidden>
+        <span class="dataset-toggle-label">Veri (symbol):</span>
+        <div class="chips" id="datasetChips"><!-- dataset chips injected --></div>
+      </div>
     </section>
 
     <section class="card">
@@ -60,6 +65,65 @@
         <label class="autoscroll"><input type="checkbox" id="autoScroll" checked /> auto-scroll</label>
       </div>
       <pre class="console" id="console"></pre>
+    </section>
+  </main>
+
+  <!-- ───────────────────────── DATA TAB ───────────────────────── -->
+  <main class="tab-panel" id="tab-data">
+    <section class="card">
+      <div class="card-head">
+        <label class="card-label">Downloaded datasets</label>
+        <button class="btn ghost" id="datasetsRefresh">↻ Refresh</button>
+      </div>
+      <span class="hint">Backtests read tick data from <code>data/ticks/&lt;SYMBOL&gt;/</code>. Click a row to use that symbol in the Run tab.</span>
+      <table class="dataset-table" id="datasetTable">
+        <thead><tr><th>Symbol</th><th>Days</th><th>Range</th><th></th></tr></thead>
+        <tbody><!-- rows injected --></tbody>
+      </table>
+      <p class="errors" id="datasetMsg"></p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <label class="card-label">Fetch new tick data</label>
+        <span class="hint">Downloaded from Binance Vision — free, no API key needed.</span>
+      </div>
+      <form id="fetchForm" class="fields">
+        <div class="field">
+          <label>Symbol <span class="req">*</span></label>
+          <input class="input" id="fetchSymbol" list="datasetOptions" placeholder="e.g. BTCUSDT" />
+          <div class="desc">USDT-M futures symbol (uppercase).</div>
+        </div>
+        <div class="field">
+          <label>Start date <span class="req">*</span></label>
+          <input class="input" id="fetchStart" type="date" value="2024-01-01" />
+        </div>
+        <div class="field">
+          <label>End date <span class="req">*</span></label>
+          <input class="input" id="fetchEnd" type="date" value="2024-01-31" />
+        </div>
+        <div class="field">
+          <label>Market type</label>
+          <select class="select" id="fetchMarket">
+            <option value="um" selected>um (USD-M perpetuals)</option>
+            <option value="spot">spot</option>
+            <option value="cm">cm (COIN-M)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Data type</label>
+          <select class="select" id="fetchDataType">
+            <option value="aggTrades" selected>aggTrades (smaller, recommended)</option>
+            <option value="trades">trades</option>
+          </select>
+        </div>
+      </form>
+      <div class="actions" style="margin-top:14px">
+        <button class="btn primary" id="fetchBtn">⤓ Fetch data</button>
+        <button class="btn danger" id="fetchStopBtn" disabled>■ Stop</button>
+      </div>
+      <p class="errors" id="fetchMsg"></p>
+      <pre class="console" id="dataConsole" style="height:240px;margin-top:12px"></pre>
     </section>
   </main>
 
@@ -110,6 +174,7 @@
 
   <datalist id="fileOptions"></datalist>
   <datalist id="strategyOptions"></datalist>
+  <datalist id="datasetOptions"></datalist>
 
   <script src="/static/app.js"></script>
 </body>

@@ -21,6 +21,8 @@ const el = (tag, props = {}, ...kids) => {
 let SCHEMA = {};        // { commandName: {name, params:[...]} }
 let CURRENT_CMD = null;
 let evtSource = null;
+let DATASETS = [];      // [{symbol, days, start, end}]
+let streamTarget = "#console";
 
 const COMMAND_HELP = {
   "backtest": "Run a single backtest (optionally with cross-validation).",
@@ -52,7 +54,66 @@ async function init() {
   renderCommandBar(schemaRes.commands.map((c) => c.name));
   selectCommand(schemaRes.commands[0].name);
 
+  await loadDatasets();
   loadEnv();
+
+  // deep-link to a tab via #hash (e.g. /#data)
+  const h = location.hash.replace("#", "");
+  if (h && document.getElementById("tab-" + h)) switchTab(h);
+}
+
+async function loadDatasets() {
+  try {
+    const res = await fetch("/api/datasets").then((r) => r.json());
+    DATASETS = res.datasets || [];
+  } catch (e) {
+    DATASETS = [];
+  }
+  populateDatalist("datasetOptions", DATASETS.map((d) => d.symbol));
+  renderDatasetChips();
+  renderDatasetTable();
+}
+
+function renderDatasetChips() {
+  const wrap = $("#datasetToggle");
+  const chips = $("#datasetChips");
+  chips.innerHTML = "";
+  if (!DATASETS.length) { wrap.hidden = true; return; }
+  wrap.hidden = false;
+  DATASETS.forEach((d) => {
+    chips.append(el("button", {
+      className: "chip", type: "button",
+      textContent: d.symbol,
+      title: `${d.days} days (${d.start} → ${d.end})`,
+      onclick: () => useSymbol(d.symbol),
+    }));
+  });
+}
+
+function renderDatasetTable() {
+  const tbody = document.querySelector("#datasetTable tbody");
+  tbody.innerHTML = "";
+  if (!DATASETS.length) {
+    tbody.append(el("tr", {}, el("td", { colSpan: 4, className: "muted-cell", textContent: "No datasets yet — fetch some below." })));
+    return;
+  }
+  DATASETS.forEach((d) => {
+    const useBtn = el("button", { className: "btn ghost small", type: "button", textContent: "Use in Run", onclick: () => useSymbol(d.symbol) });
+    tbody.append(el("tr", {},
+      el("td", { textContent: d.symbol }),
+      el("td", { textContent: String(d.days) }),
+      el("td", { textContent: `${d.start} → ${d.end}` }),
+      el("td", {}, useBtn)));
+  });
+}
+
+// set the symbol field of the current command and jump to the Run tab
+function useSymbol(sym) {
+  const field = document.querySelector('#settingsForm [data-dest="symbol"]');
+  if (field) { field.value = sym; updatePreview(); }
+  document.querySelectorAll(".chip").forEach((c) =>
+    c.classList.toggle("active", c.textContent === sym));
+  switchTab("run");
 }
 
 function populateDatalist(id, items) {
@@ -148,12 +209,13 @@ function renderField(p) {
       dataset: { dest: p.dest, kind: "value" },
     });
   } else {
-    control = el("input", {
-      className: "input",
-      type: p.type === "int" || p.type === "float" ? "text" : "text",
+    const attrs = {
+      className: "input", type: "text",
       placeholder: p.default != null ? String(p.default) : "",
       dataset: { dest: p.dest, kind: "value" },
-    });
+    };
+    if (p.dest === "symbol") attrs.list = "datasetOptions";
+    control = el("input", attrs);
   }
   wrap.append(control);
 
@@ -219,6 +281,44 @@ function setupActions() {
   $("#fileSave").onclick = saveFile;
   $("#envLoad").onclick = loadEnv;
   $("#envSave").onclick = saveEnv;
+
+  $("#datasetsRefresh").onclick = loadDatasets;
+  $("#fetchBtn").onclick = fetchData;
+  $("#fetchStopBtn").onclick = stopCommand;
+}
+
+async function fetchData() {
+  const body = {
+    symbol: $("#fetchSymbol").value,
+    start: $("#fetchStart").value,
+    end: $("#fetchEnd").value,
+    market_type: $("#fetchMarket").value,
+    data_type: $("#fetchDataType").value,
+  };
+  const res = await fetch("/api/fetch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).then((r) => r.json());
+
+  if (!res.ok) {
+    msg("#fetchMsg", "⚠ " + (res.errors || ["failed to start"]).join(", "), false);
+    return;
+  }
+  msg("#fetchMsg", "", true);
+  $("#dataConsole").innerHTML = "";
+  $("#fetchBtn").disabled = true;
+  $("#fetchStopBtn").disabled = false;
+  setPill(true);
+  openStream({
+    target: "#dataConsole",
+    onDone: (rc) => {
+      $("#fetchBtn").disabled = false;
+      $("#fetchStopBtn").disabled = true;
+      setPill(false, rc);
+      loadDatasets();
+    },
+  });
 }
 
 async function runCommand() {
@@ -236,10 +336,11 @@ async function runCommand() {
   $("#formErrors").textContent = "";
   $("#console").innerHTML = "";
   setRunning(true);
-  openStream();
+  openStream({ target: "#console", onDone: (rc) => setRunning(false, rc) });
 }
 
-function openStream() {
+function openStream(opts) {
+  streamTarget = opts.target;
   if (evtSource) evtSource.close();
   evtSource = new EventSource("/api/stream");
 
@@ -248,12 +349,11 @@ function openStream() {
   evtSource.addEventListener("done", (e) => {
     const rc = parseInt(e.data, 10);
     appendLine(`\n[process exited with code ${rc}]`, rc === 0 ? "ok-line" : "err-line");
-    setRunning(false, rc);
+    if (opts.onDone) opts.onDone(rc);
     evtSource.close();
     evtSource = null;
   });
   evtSource.onerror = () => {
-    // connection dropped; let status reflect idle if not already done
     if (evtSource) { evtSource.close(); evtSource = null; }
   };
 }
@@ -263,7 +363,8 @@ async function stopCommand() {
 }
 
 function appendLine(text, cls) {
-  const con = $("#console");
+  const con = $(streamTarget);
+  if (!con) return;
   let klass = cls;
   if (!klass) {
     const low = text.toLowerCase();
@@ -271,27 +372,23 @@ function appendLine(text, cls) {
     else if (low.includes("warning") || low.startsWith("warn")) klass = "warn-line";
   }
   con.append(el("div", { className: klass || "", textContent: text }));
-  if ($("#autoScroll").checked) con.scrollTop = con.scrollHeight;
+  con.scrollTop = con.scrollHeight;
+}
+
+function setPill(running, rc) {
+  const dot = $("#statusDot");
+  const txt = $("#statusText");
+  dot.className = "dot";
+  if (running) { dot.classList.add("running"); txt.textContent = "running"; }
+  else if (rc === undefined) { txt.textContent = "idle"; }
+  else if (rc === 0) { dot.classList.add("done"); txt.textContent = "done"; }
+  else { dot.classList.add("error"); txt.textContent = `exited (${rc})`; }
 }
 
 function setRunning(running, rc) {
   $("#runBtn").disabled = running;
   $("#stopBtn").disabled = !running;
-  const dot = $("#statusDot");
-  const txt = $("#statusText");
-  dot.className = "dot";
-  if (running) {
-    dot.classList.add("running");
-    txt.textContent = "running";
-  } else if (rc === undefined) {
-    txt.textContent = "idle";
-  } else if (rc === 0) {
-    dot.classList.add("done");
-    txt.textContent = "done";
-  } else {
-    dot.classList.add("error");
-    txt.textContent = `exited (${rc})`;
-  }
+  setPill(running, rc);
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -299,13 +396,13 @@ function setRunning(running, rc) {
 // ──────────────────────────────────────────────────────────────────────
 function setupTabs() {
   document.querySelectorAll(".tab").forEach((t) => {
-    t.onclick = () => {
-      document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
-      document.querySelectorAll(".tab-panel").forEach((x) => x.classList.remove("active"));
-      t.classList.add("active");
-      $("#tab-" + t.dataset.tab).classList.add("active");
-    };
+    t.onclick = () => switchTab(t.dataset.tab);
   });
+}
+
+function switchTab(name) {
+  document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x.dataset.tab === name));
+  document.querySelectorAll(".tab-panel").forEach((x) => x.classList.toggle("active", x.id === "tab-" + name));
 }
 
 // ──────────────────────────────────────────────────────────────────────

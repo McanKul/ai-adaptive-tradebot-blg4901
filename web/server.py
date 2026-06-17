@@ -373,6 +373,59 @@ def api_file():
         return jsonify({"ok": False, "error": str(e)}), 400
 
 
+@app.route("/api/datasets")
+def api_datasets():
+    """List downloaded tick datasets under data/ticks/<SYMBOL>/."""
+    base = os.path.join(REPO_ROOT, "data", "ticks")
+    out = []
+    if os.path.isdir(base):
+        for sym in sorted(os.listdir(base)):
+            d = os.path.join(base, sym)
+            if not os.path.isdir(d):
+                continue
+            days = sorted(f[:-4] for f in os.listdir(d) if f.endswith(".csv"))
+            if not days:
+                continue
+            out.append({"symbol": sym, "days": len(days),
+                        "start": days[0], "end": days[-1]})
+    return jsonify({"datasets": out})
+
+
+@app.route("/api/fetch", methods=["POST"])
+def api_fetch():
+    """Download tick data via tools/fetch_ticks.py (streamed like a run)."""
+    global _current
+    data = request.get_json(force=True) or {}
+    symbol = (data.get("symbol") or "").strip().upper()
+    start = (data.get("start") or "").strip()
+    end = (data.get("end") or "").strip()
+    market = (data.get("market_type") or "um").strip()
+    dtype = (data.get("data_type") or "aggTrades").strip()
+
+    errors = []
+    if not symbol:
+        errors.append("symbol is required")
+    if not start:
+        errors.append("start date is required")
+    if not end:
+        errors.append("end date is required")
+    if errors:
+        return jsonify({"ok": False, "errors": errors}), 400
+
+    argv = ["tools/fetch_ticks.py", "--symbol", symbol, "--start", start,
+            "--end", end, "--output", "data/ticks",
+            "--market-type", market, "--data-type", dtype]
+    with _run_lock:
+        if _current and not _current.done:
+            return jsonify({"ok": False, "errors": ["A run is already in progress. Stop it first."]}), 409
+        full = [sys.executable, *argv]
+        cmdstr = " ".join([os.path.basename(sys.executable), *_shell_join(argv)])
+        run = Run(full, cmdstr)
+        run.start()
+        _current = run
+    return jsonify({"ok": True, "command": cmdstr})
+
+
 @app.route("/api/preview", methods=["POST"])
 def api_preview():
     data = request.get_json(force=True) or {}
