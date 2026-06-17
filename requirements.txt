@@ -18,3 +18,4 @@ requests>=2.31,<3.0
 matplotlib>=3.7,<4.0
 ntscraper>=0.3
 ddgs>=6.0
+flask>=3.0,<4.0

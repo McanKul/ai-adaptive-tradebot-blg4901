@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI-Adaptive Trading Bot — Control Panel</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">▲</span>
+      <div>
+        <h1>AI-Adaptive Trading Bot</h1>
+        <p class="subtitle">Web control panel for <code>app.py</code></p>
+      </div>
+    </div>
+    <div class="status-pill" id="statusPill">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">idle</span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="run">Run</button>
+    <button class="tab" data-tab="files">Config Files</button>
+    <button class="tab" data-tab="env">Environment</button>
+  </nav>
+
+  <!-- ───────────────────────── RUN TAB ───────────────────────── -->
+  <main class="tab-panel active" id="tab-run">
+    <section class="card">
+      <label class="card-label">Command</label>
+      <div class="command-bar" id="commandBar"><!-- command buttons injected --></div>
+      <p class="command-help" id="commandHelp"></p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <label class="card-label">Settings</label>
+        <span class="hint">Every flag from the selected <code>app.py</code> subcommand. Blank fields use the CLI default.</span>
+      </div>
+      <form id="settingsForm" class="settings"><!-- fields injected --></form>
+    </section>
+
+    <section class="card preview-card">
+      <label class="card-label">Command preview</label>
+      <pre class="preview" id="preview">python app.py …</pre>
+      <div class="actions">
+        <button class="btn primary" id="runBtn">▶ Run</button>
+        <button class="btn danger" id="stopBtn" disabled>■ Stop</button>
+        <button class="btn ghost" id="clearBtn">Clear log</button>
+      </div>
+      <p class="errors" id="formErrors"></p>
+    </section>
+
+    <section class="card console-card">
+      <div class="card-head">
+        <label class="card-label">Output</label>
+        <label class="autoscroll"><input type="checkbox" id="autoScroll" checked /> auto-scroll</label>
+      </div>
+      <pre class="console" id="console"></pre>
+    </section>
+  </main>
+
+  <!-- ──────────────────────── FILES TAB ──────────────────────── -->
+  <main class="tab-panel" id="tab-files">
+    <section class="card">
+      <div class="card-head">
+        <label class="card-label">Config / strategy / realism files</label>
+        <span class="hint">Edit the YAML/JSON files that <code>live</code>, <code>dry-run</code>, <code>sweep</code> and <code>validate</code> read.</span>
+      </div>
+      <div class="file-row">
+        <select id="fileSelect" class="select grow"></select>
+        <button class="btn" id="fileLoad">Load</button>
+        <button class="btn primary" id="fileSave">Save</button>
+      </div>
+      <textarea id="fileEditor" class="editor" spellcheck="false" placeholder="Select a file and click Load…"></textarea>
+      <p class="errors" id="fileMsg"></p>
+    </section>
+  </main>
+
+  <!-- ───────────────────────── ENV TAB ───────────────────────── -->
+  <main class="tab-panel" id="tab-env">
+    <section class="card">
+      <div class="card-head">
+        <label class="card-label">.env — API keys & secrets</label>
+        <span class="hint">Binance / sentiment / Telegram credentials the bot loads at startup.</span>
+      </div>
+      <textarea id="envEditor" class="editor" spellcheck="false" placeholder="Loading .env…"></textarea>
+      <div class="actions">
+        <button class="btn" id="envLoad">Reload</button>
+        <button class="btn primary" id="envSave">Save .env</button>
+      </div>
+      <p class="errors" id="envMsg"></p>
+      <details class="env-help">
+        <summary>Which variables are used?</summary>
+        <table>
+          <tr><th>Variable</th><th>Required</th><th>Purpose</th></tr>
+          <tr><td><code>BINANCE_API_KEY</code></td><td>live</td><td>Binance API key</td></tr>
+          <tr><td><code>BINANCE_API_SECRET</code></td><td>live</td><td>Binance API secret</td></tr>
+          <tr><td><code>GOOGLE_API_KEY</code></td><td>no</td><td>Gemini sentiment provider</td></tr>
+          <tr><td><code>OPENAI_API_KEY</code></td><td>no</td><td>OpenAI sentiment provider</td></tr>
+          <tr><td><code>TELEGRAM_BOT_TOKEN</code></td><td>no</td><td>Telegram notifications</td></tr>
+          <tr><td><code>TELEGRAM_CHAT_ID</code></td><td>no</td><td>Telegram chat id</td></tr>
+        </table>
+      </details>
+    </section>
+  </main>
+
+  <datalist id="fileOptions"></datalist>
+  <datalist id="strategyOptions"></datalist>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
