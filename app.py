@@ -677,6 +677,31 @@ def _cmd_validate(args):
     print(f"\nConfig is valid ({scope}): {args.config}")
 
 
+# ── Subcommand: web ──────────────────────────────────────────────────
+
+
+def _add_web_parser(subparsers):
+    p = subparsers.add_parser(
+        "web",
+        help="Launch the web control panel (GUI for every subcommand)",
+    )
+    p.add_argument("--host", default="127.0.0.1",
+                   help="Host to bind (default 127.0.0.1)")
+    p.add_argument("--port", type=int, default=8000,
+                   help="Port to listen on (default 8000)")
+    p.set_defaults(func=_cmd_web)
+
+
+def _cmd_web(args):
+    # Lazy import so Flask is only required when actually launching the UI.
+    try:
+        from web import server
+    except ImportError as e:
+        print(f"ERROR: the web UI requires Flask: pip install flask\n  ({e})")
+        sys.exit(1)
+    server.main(host=args.host, port=args.port)
+
+
 # ── Main ─────────────────────────────────────────────────────────────
 
 
@@ -698,6 +723,7 @@ def main():
     _add_dry_run_parser(subparsers)
     _add_sweep_parser(subparsers)
     _add_validate_parser(subparsers)
+    _add_web_parser(subparsers)
 
     args = parser.parse_args()
 
