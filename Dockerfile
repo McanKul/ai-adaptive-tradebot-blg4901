@@ -26,7 +26,7 @@ FROM python:3.10-slim
 WORKDIR /app
 
 # Copy TA-Lib shared libs + Python packages from builder
-COPY --from=builder /usr/lib/libta_lib* /usr/lib/
+COPY --from=builder /usr/lib/libta-lib* /usr/lib/
 COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
