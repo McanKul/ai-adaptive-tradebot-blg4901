@@ -48,7 +48,7 @@ async function init() {
 
   schemaRes.commands.forEach((c) => (SCHEMA[c.name] = c));
   populateDatalist("strategyOptions", stratRes.strategies || []);
-  populateDatalist("fileOptions", filesRes.files || []);
+  buildFileDatalists(filesRes.files || []);
   populateFileSelect(filesRes.files || []);
 
   renderCommandBar(schemaRes.commands.map((c) => c.name));
@@ -118,8 +118,34 @@ function useSymbol(sym) {
 
 function populateDatalist(id, items) {
   const dl = document.getElementById(id);
+  if (!dl) return;
   dl.innerHTML = "";
   items.forEach((v) => dl.append(el("option", { value: v })));
+}
+
+// Per-purpose file pickers so each field only suggests relevant files.
+const FILE_FILTERS = {
+  "files-realism": (f) => /realism/i.test(f),
+  "files-grid": (f) => /grid/i.test(f),
+  "files-composite": (f) => /composite/i.test(f),
+  "files-config": (f) => /\.(ya?ml|json)$/i.test(f) && !/grid|realism|composite|\.github/i.test(f),
+};
+
+function fileListId(dest) {
+  return {
+    realism_config: "files-realism",
+    param_grid: "files-grid",
+    composite_spec: "files-composite",
+    config: "files-config",
+  }[dest] || "fileOptions";
+}
+
+function buildFileDatalists(files) {
+  populateDatalist("fileOptions", files);
+  for (const [id, filt] of Object.entries(FILE_FILTERS)) {
+    if (!document.getElementById(id)) document.body.append(el("datalist", { id }));
+    populateDatalist(id, files.filter(filt));
+  }
 }
 
 function populateFileSelect(files) {
@@ -204,7 +230,7 @@ function renderField(p) {
   } else if (p.widget === "strategy" || p.widget === "file") {
     control = el("input", {
       className: "input", type: "text",
-      list: p.widget === "strategy" ? "strategyOptions" : "fileOptions",
+      list: p.widget === "strategy" ? "strategyOptions" : fileListId(p.dest),
       placeholder: p.default != null ? String(p.default) : "",
       dataset: { dest: p.dest, kind: "value" },
     });
