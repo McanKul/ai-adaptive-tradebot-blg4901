@@ -60,6 +60,23 @@ async function init() {
   // deep-link to a tab via #hash (e.g. /#data)
   const h = location.hash.replace("#", "");
   if (h && document.getElementById("tab-" + h)) switchTab(h);
+
+  // If a run is already in progress (or just finished), attach to its
+  // stream so opening the panel shows the live output without re-running.
+  maybeAttachActiveRun();
+}
+
+async function maybeAttachActiveRun() {
+  try {
+    const st = await fetch("/api/status").then((r) => r.json());
+    if (!st.command) return; // nothing has run yet
+    $("#console").innerHTML = "";
+    setRunning(!!st.running, st.running ? undefined : st.returncode);
+    openStream({ target: "#console", onDone: (rc) => setRunning(false, rc) });
+    switchTab("run");
+  } catch (e) {
+    /* status unavailable — ignore */
+  }
 }
 
 async function loadDatasets() {

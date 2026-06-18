@@ -426,6 +426,44 @@ def api_fetch():
     return jsonify({"ok": True, "command": cmdstr})
 
 
+def _safe_token(val: str) -> bool:
+    """Allow only filesystem/identifier-safe chars (no shell metacharacters)."""
+    return bool(val) and all(c.isalnum() or c in "./-_" for c in val)
+
+
+@app.route("/api/compare-realism", methods=["POST"])
+def api_compare_realism():
+    """Run the same backtest twice — without and with a realism config — as a
+    single streamed job, so both results land in one console."""
+    global _current
+    data = request.get_json(force=True) or {}
+    strategy = (data.get("strategy") or "DonchianATRVolTarget").strip()
+    symbol = (data.get("symbol") or "DOGEUSDT").strip()
+    data_dir = (data.get("data_dir") or "./data/ticks").strip()
+    realism = (data.get("realism_config") or "config/realism_live.yaml").strip()
+
+    for v in (strategy, symbol, data_dir, realism):
+        if not _safe_token(v):
+            return jsonify({"ok": False, "errors": [f"unsafe value: {v!r}"]}), 400
+
+    py = sys.executable
+    base = f"{py} app.py backtest --strategy {strategy} --symbol {symbol} --data-dir {data_dir}"
+    script = (
+        f"echo '════════ 1/2  REALISM YOK (idealize maliyet) ════════'; {base}; "
+        f"echo; echo '════════ 2/2  REALISM VAR ({realism}) ════════'; "
+        f"{base} --realism-config {realism}; "
+        f"echo; echo '════════ karşılaştırma bitti ════════'"
+    )
+    with _run_lock:
+        if _current and not _current.done:
+            return jsonify({"ok": False, "errors": ["A run is already in progress. Stop it first."]}), 409
+        run = Run(["sh", "-lc", script],
+                  f"realism karşılaştırması — {strategy} / {symbol} ({data_dir})")
+        run.start()
+        _current = run
+    return jsonify({"ok": True, "command": run.command_str})
+
+
 @app.route("/api/preview", methods=["POST"])
 def api_preview():
     data = request.get_json(force=True) or {}
